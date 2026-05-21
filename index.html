@@ -961,6 +961,8 @@ let cintas = [];
 let cintaCount = 0;
 let editingId = null;
 let editCintaCount = 0;
+let sheetIds = {};
+let deletedCintaIds = [];
 
 // ═══════════════════════════════════════════════════════════
 // LOGO FALLBACK (si logo.png no existe, mostramos SVG inline)
@@ -1281,7 +1283,7 @@ async function loadData() {
   try {
     const [pData, cData] = await Promise.all([
       sheetsGet('PEDIDOS!A2:AJ5000'),
-      sheetsGet('CINTAS!A2:F5000'),
+      sheetsGet('CINTAS!A2:J5000'),
     ]);
 
     const pRows = pData.values || [];
@@ -1658,7 +1660,10 @@ function renderHistorial() {
             : '<span class="text-muted" style="font-size:11px">Sin cintas</span>'}
         </td>
         <td>
-          <button class="btn btn-xs" onclick="abrirEditar('${p.id}')">Editar</button>
+          <div style="display:flex;gap:4px">
+            <button class="btn btn-xs" onclick="abrirEditar('${p.id}')">Editar</button>
+            ${esAbierto ? `<button class="btn btn-xs btn-danger" onclick="eliminarPedido('${p.id}')">Eliminar</button>` : ''}
+          </div>
         </td>
       </tr>
       ${cintasRows}`;
@@ -1677,6 +1682,7 @@ function toggleCintas(id) {
 function abrirEditar(id) {
   editingId = id;
   editCintaCount = 0;
+  deletedCintaIds = [];
   const p = pedidos.find(x => x.id === id);
   if (!p) return;
 
@@ -1791,7 +1797,7 @@ function addEditCinta(data) {
       <label>Observación cinta</label>
       <input id="ec-obs-cinta-${n}" placeholder="Notas..." value="${data?.obs_cinta||''}">
     </div>
-    <button class="btn btn-xs btn-danger" onclick="this.closest('.cinta-item').remove()" style="align-self:flex-end;margin-bottom:1px">Quitar</button>`;
+    <button class="btn btn-xs btn-danger" onclick="quitarEditCinta(this)" style="align-self:flex-end;margin-bottom:1px">Quitar</button>`;
   container.appendChild(div);
 }
 
@@ -1810,7 +1816,6 @@ async function guardarEdicion() {
   }
 
   try {
-    // Find row in sheet
     const data = await sheetsGet('PEDIDOS!A:A');
     const rows = data.values || [];
     let rowNum = -1;
@@ -1850,11 +1855,11 @@ async function guardarEdicion() {
 
     await sheetsUpdate(`PEDIDOS!A${rowNum}:AJ${rowNum}`, [updatedRow]);
 
-    // Handle cintas: append new ones (existing ones stay)
+    // Handle cintas: eliminar quitadas + agregar nuevas
     const editItems = document.querySelectorAll('#edit-cintas-container .cinta-item');
     const existingIds = cintas.filter(c => c.id_pedido === editingId).map(c => c.id_cinta);
     const newCintas = [];
-    editItems.forEach((item, i) => {
+    editItems.forEach((item) => {
       const n = item.id.split('-')[1];
       const cintaId = item.dataset.cintaId;
       if (!cintaId) {
@@ -1862,18 +1867,37 @@ async function guardarEdicion() {
           editingId + '_C' + (existingIds.length + newCintas.length + 1),
           editingId,
           document.getElementById('ec-dia-' + n)?.value || '',
-          document.getElementById('ec-prod-' + n)?.value || '',
-          document.getElementById('ec-cod-' + n)?.value || '',
-          document.getElementById('ec-cinta-' + n)?.value || '',
+          (document.getElementById('ec-prod-' + n)?.value || '').toUpperCase(),
+          (document.getElementById('ec-cod-' + n)?.value || '').toUpperCase(),
+          (document.getElementById('ec-cinta-' + n)?.value || '').toUpperCase(),
           document.getElementById('ec-cant-' + n)?.value || '',
-          document.getElementById('ec-obs-cinta-' + n)?.value || '',
+          'Unidades',
+          (document.getElementById('ec-obs-cinta-' + n)?.value || '').toUpperCase(),
           now,
         ]);
       }
     });
 
     if (newCintas.length > 0) {
-      await sheetsAppend('CINTAS!A:I', newCintas);
+      await sheetsAppend('CINTAS!A:J', newCintas);
+    }
+
+    // Eliminar del sheet las cintas que el usuario quitó
+    if (deletedCintaIds.length > 0) {
+      const cinAllData = await sheetsGet('CINTAS!A:A');
+      const cinAllRows = cinAllData.values || [];
+      const rowsToDelete = [];
+      for (let i = 1; i < cinAllRows.length; i++) {
+        if (deletedCintaIds.includes((cinAllRows[i][0] || '').trim())) rowsToDelete.push(i + 1);
+      }
+      if (rowsToDelete.length > 0) {
+        const cinSheetId = await obtenerSheetId('CINTAS');
+        const delRequests = rowsToDelete.sort((a, b) => b - a).map(row => ({
+          deleteDimension: { range: { sheetId: cinSheetId, dimension: 'ROWS', startIndex: row - 1, endIndex: row } }
+        }));
+        await eliminarFilasBatch(delRequests);
+      }
+      deletedCintaIds = [];
     }
 
     toast('Cambios guardados', 'success');
@@ -1907,55 +1931,195 @@ async function cambiarEstado() {
 }
 
 // ═══════════════════════════════════════════════════════════
+// SHEET METADATA + ELIMINACIÓN DE FILAS
+// ═══════════════════════════════════════════════════════════
+async function obtenerSheetId(sheetName) {
+  if (sheetIds[sheetName] !== undefined) return sheetIds[sheetName];
+  await asegurarTokenVigente();
+  const r = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}?fields=sheets.properties`,
+    { headers: { Authorization: 'Bearer ' + accessToken } }
+  );
+  const data = await r.json();
+  (data.sheets || []).forEach(s => { sheetIds[s.properties.title] = s.properties.sheetId; });
+  return sheetIds[sheetName];
+}
+
+async function eliminarFilasBatch(requests) {
+  await asegurarTokenVigente();
+  const r = await fetch(
+    `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}:batchUpdate`,
+    {
+      method: 'POST',
+      headers: { Authorization: 'Bearer ' + accessToken, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requests })
+    }
+  );
+  if (!r.ok) throw new Error('Error al eliminar filas: ' + r.status);
+  return r.json();
+}
+
+async function eliminarPedido(id) {
+  const p = pedidos.find(x => x.id === id);
+  if (!p) return;
+  const nCintas = cintas.filter(c => c.id_pedido === id).length;
+  const msg = '¿Eliminar el pedido de ' + p.cliente + ' — ' + p.producto + '?'
+    + (nCintas > 0 ? '\nSe eliminarán también ' + nCintas + ' cinta(s) asociada(s).' : '')
+    + '\n\nEsta acción no se puede deshacer.';
+  if (!confirm(msg)) return;
+
+  try {
+    const pedData = await sheetsGet('PEDIDOS!A:A');
+    const pedRows = pedData.values || [];
+    let pedRow = -1;
+    for (let i = 1; i < pedRows.length; i++) {
+      if ((pedRows[i][0] || '').trim() === id) { pedRow = i + 1; break; }
+    }
+    if (pedRow < 0) { toast('No se encontró el pedido', 'error'); return; }
+
+    const cinData = await sheetsGet('CINTAS!B:B');
+    const cinRows = cinData.values || [];
+    const cinRowNums = [];
+    for (let i = 1; i < cinRows.length; i++) {
+      if ((cinRows[i][0] || '').trim() === id) cinRowNums.push(i + 1);
+    }
+
+    const pedSheetId = await obtenerSheetId('PEDIDOS');
+    const cinSheetId = await obtenerSheetId('CINTAS');
+
+    const requests = [
+      ...cinRowNums.sort((a, b) => b - a).map(row => ({
+        deleteDimension: { range: { sheetId: cinSheetId, dimension: 'ROWS', startIndex: row - 1, endIndex: row } }
+      })),
+      { deleteDimension: { range: { sheetId: pedSheetId, dimension: 'ROWS', startIndex: pedRow - 1, endIndex: pedRow } } }
+    ];
+
+    await eliminarFilasBatch(requests);
+    toast('Pedido eliminado correctamente', 'success');
+    await loadData();
+  } catch (e) {
+    toast('Error al eliminar: ' + e.message, 'error');
+  }
+}
+
+function quitarEditCinta(btn) {
+  const item = btn.closest('.cinta-item');
+  const cintaId = item.dataset.cintaId;
+  if (cintaId) deletedCintaIds.push(cintaId);
+  item.remove();
+}
+
+// ═══════════════════════════════════════════════════════════
 // RESUMEN
 // ═══════════════════════════════════════════════════════════
+let resumenFiltros = { anio: '', mes: '', dia: '', producto: '', presentacion: '' };
+
 function renderResumen() {
-  const mapa = {};
-  pedidos.forEach(p => {
-    const k = p.cliente;
-    if (!mapa[k]) mapa[k] = { cliente: k, pedidos: 0, unidades: 0, retal: 0, cintas: 0, productos: new Set() };
-    mapa[k].pedidos++;
-    mapa[k].unidades += parseFloat(p.unidades)||0;
-    mapa[k].retal += parseFloat(p.retal)||0;
-    mapa[k].cintas += cintas.filter(c => c.id_pedido === p.id).length;
-    if (p.producto) mapa[k].productos.add(p.producto);
+  const anios = [...new Set(pedidos.map(p => p.fecha_entrega?.slice(0,4)).filter(Boolean))].sort().reverse();
+  const meses = [...new Set(pedidos.map(p => p.fecha_entrega?.slice(0,7)).filter(Boolean))].sort().reverse();
+  const prods = [...new Set(pedidos.map(p => p.producto).filter(Boolean))].sort();
+  const pres  = [...new Set(pedidos.map(p => p.presentacion).filter(Boolean))].sort();
+
+  const filtPedidos = pedidos.filter(p => {
+    if (resumenFiltros.anio && !p.fecha_entrega?.startsWith(resumenFiltros.anio)) return false;
+    if (resumenFiltros.mes  && !p.fecha_entrega?.startsWith(resumenFiltros.mes))  return false;
+    if (resumenFiltros.dia  && p.fecha_entrega !== resumenFiltros.dia)             return false;
+    if (resumenFiltros.producto     && p.producto     !== resumenFiltros.producto)     return false;
+    if (resumenFiltros.presentacion && p.presentacion !== resumenFiltros.presentacion) return false;
+    return true;
   });
-  const rows = Object.values(mapa).sort((a,b) => b.unidades - a.unidades);
+
+  const mapa = {};
+  filtPedidos.forEach(p => {
+    const k = p.cliente || '(SIN CLIENTE)';
+    if (!mapa[k]) mapa[k] = { cliente: k, listaPedidos: [], unidades: 0, retal: 0, cintas: 0 };
+    mapa[k].listaPedidos.push(p);
+    mapa[k].unidades += parseFloat(p.unidades) || 0;
+    mapa[k].retal    += parseFloat(p.retal)    || 0;
+    mapa[k].cintas   += cintas.filter(c => c.id_pedido === p.id).length;
+  });
+  const rows = Object.values(mapa).sort((a, b) => b.unidades - a.unidades);
+  const pBadge = { BLOQUE:'badge-blue', TAJADO:'badge-green', DEDOS:'badge-amber', 'PORCIÓN':'badge-red' };
 
   document.getElementById('resumen-content').innerHTML = `
-    <div class="card" style="padding:0;overflow:hidden">
-      <div class="card-header"><span class="card-title">Resumen por cliente</span></div>
-      <div class="table-wrap">
-        <table class="data-table">
-          <thead><tr>
-            <th>Cliente</th><th>Productos</th>
-            <th style="text-align:right">Pedidos</th>
-            <th style="text-align:right">Cintas</th>
-            <th style="text-align:right">Unidades</th>
-            <th style="text-align:right">Retal (lb)</th>
-          </tr></thead>
-          <tbody>${rows.map(r => `<tr>
-            <td><strong>${r.cliente}</strong></td>
-            <td style="font-size:12px;color:var(--text2)">${[...r.productos].join(', ')}</td>
-            <td style="text-align:right">${r.pedidos}</td>
-            <td style="text-align:right">${r.cintas}</td>
-            <td style="text-align:right">${r.unidades.toLocaleString('es-CO')}</td>
-            <td style="text-align:right;${r.retal>0?'color:var(--danger);font-weight:600':''}">${r.retal.toFixed(1)}</td>
-          </tr>`).join('')}</tbody>
-        </table>
-      </div>
-    </div>`;
+    <div class="filter-bar" style="margin-bottom:16px">
+      <select id="r-anio" onchange="resumenFiltros.anio=this.value;renderResumen()">
+        <option value="">Todos los años</option>
+        ${anios.map(a => `<option value="${a}"${a===resumenFiltros.anio?' selected':''}>${a}</option>`).join('')}
+      </select>
+      <select id="r-mes" onchange="resumenFiltros.mes=this.value;renderResumen()">
+        <option value="">Todos los meses</option>
+        ${meses.map(m => `<option value="${m}"${m===resumenFiltros.mes?' selected':''}>${m}</option>`).join('')}
+      </select>
+      <input id="r-dia" type="date" value="${resumenFiltros.dia}"
+        onchange="resumenFiltros.dia=this.value;renderResumen()"
+        style="padding:7px 11px;border:1px solid var(--border2);border-radius:var(--radius);background:var(--surface);color:var(--text);font-family:'DM Sans',sans-serif;font-size:13px"
+        title="Filtrar por día específico">
+      <select id="r-producto" onchange="resumenFiltros.producto=this.value;renderResumen()">
+        <option value="">Todos los productos</option>
+        ${prods.map(p => `<option value="${p}"${p===resumenFiltros.producto?' selected':''}>${p}</option>`).join('')}
+      </select>
+      <select id="r-presentacion" onchange="resumenFiltros.presentacion=this.value;renderResumen()">
+        <option value="">Todas las presentaciones</option>
+        ${pres.map(p => `<option value="${p}"${p===resumenFiltros.presentacion?' selected':''}>${p}</option>`).join('')}
+      </select>
+      <button class="btn btn-sm" onclick="resumenFiltros={anio:'',mes:'',dia:'',producto:'',presentacion:''};renderResumen()">Limpiar</button>
+      <span class="text-muted" style="font-size:12px;margin-left:auto">${filtPedidos.length} pedido${filtPedidos.length!==1?'s':''}</span>
+    </div>
+    ${rows.length === 0
+      ? `<div class="empty-state"><div class="empty-state-text">No hay datos con estos filtros</div></div>`
+      : rows.map(r => `
+        <div class="card" style="margin-bottom:16px;padding:0;overflow:hidden">
+          <div class="card-header">
+            <div>
+              <span class="card-title">${r.cliente}</span>
+              <span class="card-sub" style="margin-left:10px">${r.listaPedidos.length} pedido${r.listaPedidos.length!==1?'s':''}</span>
+            </div>
+            <div style="display:flex;gap:20px;font-size:12px;color:var(--text2);align-items:center">
+              <span><strong style="color:var(--text)">${r.unidades.toLocaleString('es-CO')}</strong> unidades</span>
+              <span><strong style="color:${r.retal>0?'var(--danger)':'var(--text)'}">${r.retal.toFixed(1)}</strong> lb retal</span>
+              <span><strong style="color:var(--text)">${r.cintas}</strong> cinta${r.cintas!==1?'s':''}</span>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table" style="font-size:12px">
+              <thead><tr>
+                <th>Producto</th><th>Presentación</th><th>F. Entrega</th>
+                <th style="text-align:right">Cant. Sol.</th>
+                <th style="text-align:right">Unidades</th>
+                <th style="text-align:right">Retal (lb)</th>
+                <th>Estado</th><th></th>
+              </tr></thead>
+              <tbody>
+                ${r.listaPedidos.sort((a,b)=>(b.fecha_entrega||'').localeCompare(a.fecha_entrega||'')).map(p => {
+                  const esAbierto = p.estado !== 'CERRADO';
+                  const retal = parseFloat(p.retal)||0;
+                  const bcls = pBadge[p.presentacion] || 'badge-gray';
+                  return `<tr>
+                    <td><strong>${p.producto||'—'}</strong></td>
+                    <td>${p.presentacion?`<span class="badge ${bcls}">${p.presentacion}</span>`:'—'}</td>
+                    <td style="color:var(--text2)">${fmtFecha(p.fecha_entrega)}</td>
+                    <td style="text-align:right">${p.cantidad||'—'}</td>
+                    <td style="text-align:right">${(parseFloat(p.unidades)||0).toLocaleString('es-CO')}</td>
+                    <td style="text-align:right;${retal>0?'color:var(--danger);font-weight:600':''}">${retal>0?retal.toFixed(1):'—'}</td>
+                    <td>${esAbierto
+                        ?'<span class="estado-badge estado-abierto"><span class="dot dot-abierto"></span>Abierto</span>'
+                        :'<span class="estado-badge estado-cerrado"><span class="dot dot-cerrado"></span>Cerrado</span>'}</td>
+                    <td><button class="btn btn-xs" onclick="abrirEditar('${p.id}')">Ver</button></td>
+                  </tr>`;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        </div>`).join('')}`;
 }
 
 // ═══════════════════════════════════════════════════════════
 // DASHBOARD
 // ═══════════════════════════════════════════════════════════
-// Mapa global de charts vivos para destruirlos antes de re-renderizar
 const dashCharts = {};
-// Filtros del dashboard (estado en memoria)
-let dashFiltros = { mes: '', cliente: '' };
+let dashFiltros = { anio: '', mes: '', dia: '', cliente: '', producto: '', presentacion: '' };
 
-// Conversión: en este sistema 1 libra ≈ 0.5 kg (consistente con calcularCampos)
 const LB_TO_KG = 0.5;
 
 function fmtNum(n, dec = 1) {
@@ -1970,19 +2134,20 @@ function renderDashboard() {
     return;
   }
 
-  // Inyectar estructura una sola vez
   if (!document.getElementById('dash-mounted')) {
     cont.innerHTML = `
       <div id="dash-mounted">
         <div class="dash-filter-bar">
+          <select id="dash-anio"><option value="">Todos los años</option></select>
           <select id="dash-mes"><option value="">Todos los meses</option></select>
+          <input id="dash-dia" type="date" title="Día específico" style="padding:7px 11px;border:1px solid var(--border2);border-radius:var(--radius);background:var(--surface);color:var(--text);font-family:'DM Sans',sans-serif;font-size:13px">
           <select id="dash-cliente"><option value="">Todos los clientes</option></select>
-          <button class="btn btn-sm" onclick="limpiarFiltrosDash()">Limpiar filtros</button>
+          <select id="dash-producto"><option value="">Todos los productos</option></select>
+          <select id="dash-presentacion"><option value="">Todas las presentaciones</option></select>
+          <button class="btn btn-sm" onclick="limpiarFiltrosDash()">Limpiar</button>
           <span id="dash-info" class="text-muted" style="font-size:12px;margin-left:auto"></span>
         </div>
-
         <div class="dash-metrics" id="dash-metrics"></div>
-
         <div class="dash-grid">
           <div class="dash-card">
             <div class="dash-card-header">
@@ -1999,7 +2164,6 @@ function renderDashboard() {
             <div class="dash-card-body"><div class="chart-wrap"><canvas id="ch-entregas-cli"></canvas></div></div>
           </div>
         </div>
-
         <div class="dash-grid">
           <div class="dash-card">
             <div class="dash-card-header">
@@ -2016,7 +2180,6 @@ function renderDashboard() {
             <div class="dash-card-body"><div class="chart-wrap"><canvas id="ch-pct-prod"></canvas></div></div>
           </div>
         </div>
-
         <div class="dash-grid">
           <div class="dash-card">
             <div class="dash-card-header">
@@ -2039,34 +2202,51 @@ function renderDashboard() {
         </div>
       </div>`;
 
+    document.getElementById('dash-anio').addEventListener('change', e => { dashFiltros.anio = e.target.value; renderDashboard(); });
     document.getElementById('dash-mes').addEventListener('change', e => { dashFiltros.mes = e.target.value; renderDashboard(); });
+    document.getElementById('dash-dia').addEventListener('change', e => { dashFiltros.dia = e.target.value; renderDashboard(); });
     document.getElementById('dash-cliente').addEventListener('change', e => { dashFiltros.cliente = e.target.value; renderDashboard(); });
+    document.getElementById('dash-producto').addEventListener('change', e => { dashFiltros.producto = e.target.value; renderDashboard(); });
+    document.getElementById('dash-presentacion').addEventListener('change', e => { dashFiltros.presentacion = e.target.value; renderDashboard(); });
   }
 
-  // Poblar selects (mantener selección)
+  // Poblar selects
+  const anios = [...new Set(pedidos.map(p => p.fecha_entrega?.slice(0,4)).filter(Boolean))].sort().reverse();
   const meses = [...new Set(pedidos.map(p => p.fecha_entrega?.slice(0,7)).filter(Boolean))].sort().reverse();
   const clientes = [...new Set(pedidos.map(p => p.cliente).filter(Boolean))].sort();
-  const selMes = document.getElementById('dash-mes');
-  selMes.innerHTML = '<option value="">Todos los meses</option>' +
-    meses.map(m => `<option value="${m}"${m === dashFiltros.mes ? ' selected' : ''}>${m}</option>`).join('');
-  const selCli = document.getElementById('dash-cliente');
-  selCli.innerHTML = '<option value="">Todos los clientes</option>' +
-    clientes.map(c => `<option value="${c}"${c === dashFiltros.cliente ? ' selected' : ''}>${c}</option>`).join('');
+  const prods = [...new Set(pedidos.map(p => p.producto).filter(Boolean))].sort();
+  const pres = [...new Set(pedidos.map(p => p.presentacion).filter(Boolean))].sort();
+
+  document.getElementById('dash-anio').innerHTML = '<option value="">Todos los años</option>' +
+    anios.map(a => `<option value="${a}"${a===dashFiltros.anio?' selected':''}>${a}</option>`).join('');
+  document.getElementById('dash-mes').innerHTML = '<option value="">Todos los meses</option>' +
+    meses.map(m => `<option value="${m}"${m===dashFiltros.mes?' selected':''}>${m}</option>`).join('');
+  document.getElementById('dash-dia').value = dashFiltros.dia;
+  document.getElementById('dash-cliente').innerHTML = '<option value="">Todos los clientes</option>' +
+    clientes.map(c => `<option value="${c}"${c===dashFiltros.cliente?' selected':''}>${c}</option>`).join('');
+  document.getElementById('dash-producto').innerHTML = '<option value="">Todos los productos</option>' +
+    prods.map(p => `<option value="${p}"${p===dashFiltros.producto?' selected':''}>${p}</option>`).join('');
+  document.getElementById('dash-presentacion').innerHTML = '<option value="">Todas las presentaciones</option>' +
+    pres.map(p => `<option value="${p}"${p===dashFiltros.presentacion?' selected':''}>${p}</option>`).join('');
 
   // Filtrar pedidos
   const fil = pedidos.filter(p => {
-    if (dashFiltros.mes && !p.fecha_entrega?.startsWith(dashFiltros.mes)) return false;
-    if (dashFiltros.cliente && p.cliente !== dashFiltros.cliente) return false;
+    if (dashFiltros.anio && !p.fecha_entrega?.startsWith(dashFiltros.anio)) return false;
+    if (dashFiltros.mes  && !p.fecha_entrega?.startsWith(dashFiltros.mes))  return false;
+    if (dashFiltros.dia  && p.fecha_entrega !== dashFiltros.dia)             return false;
+    if (dashFiltros.cliente      && p.cliente      !== dashFiltros.cliente)      return false;
+    if (dashFiltros.producto     && p.producto     !== dashFiltros.producto)     return false;
+    if (dashFiltros.presentacion && p.presentacion !== dashFiltros.presentacion) return false;
     return true;
   });
 
   document.getElementById('dash-info').textContent =
     `${fil.length} pedido${fil.length===1?'':'s'} considerados`;
 
-  // ─── KPIs ───
+  // KPIs
   const totLibrasEnt = fil.reduce((a,p) => a + (parseFloat(p.libras_ent)||0), 0);
-  const totKilosEnt = fil.reduce((a,p) => a + (parseFloat(p.kilos_ent)||0), 0);
   const totLibrasRetal = fil.reduce((a,p) => a + (parseFloat(p.retal)||0), 0);
+  const totKilosEnt = totLibrasEnt * LB_TO_KG;
   const totKilosRetal = totLibrasRetal * LB_TO_KG;
   const totLibrasTaj = fil.reduce((a,p) => a + (parseFloat(p.libras_taj)||0), 0);
   const totUnidades = fil.reduce((a,p) => a + (parseFloat(p.unidades)||0), 0);
@@ -2115,63 +2295,50 @@ function renderDashboard() {
       <div class="metric-label">Libras tajadas</div>
       <div class="metric-value">${fmtNum(totLibrasTaj, 1)}</div>
       <div class="metric-sub">materia procesada</div>
-    </div>
-  `;
+    </div>`;
 
-  // ─── Agrupar por producto ───
+  // Agrupar por producto
   const porProd = {};
   fil.forEach(p => {
     const k = p.producto || '(SIN PRODUCTO)';
-    if (!porProd[k]) porProd[k] = {
-      producto: k, pedidos: 0, unidades: 0,
-      librasEnt: 0, kilosEnt: 0,
-      librasRetal: 0, kilosRetal: 0,
-      librasTaj: 0
-    };
+    if (!porProd[k]) porProd[k] = { producto: k, pedidos: 0, unidades: 0, librasEnt: 0, librasRetal: 0, librasTaj: 0 };
     porProd[k].pedidos++;
-    porProd[k].unidades += parseFloat(p.unidades)||0;
-    porProd[k].librasEnt += parseFloat(p.libras_ent)||0;
-    porProd[k].kilosEnt += parseFloat(p.kilos_ent)||0;
+    porProd[k].unidades    += parseFloat(p.unidades)||0;
+    porProd[k].librasEnt   += parseFloat(p.libras_ent)||0;
     porProd[k].librasRetal += parseFloat(p.retal)||0;
-    porProd[k].librasTaj += parseFloat(p.libras_taj)||0;
+    porProd[k].librasTaj   += parseFloat(p.libras_taj)||0;
   });
-  Object.values(porProd).forEach(r => { r.kilosRetal = r.librasRetal * LB_TO_KG; });
+  Object.values(porProd).forEach(r => { r.kilosEnt = r.librasEnt * LB_TO_KG; r.kilosRetal = r.librasRetal * LB_TO_KG; });
   const prodArr = Object.values(porProd).sort((a,b) => b.librasRetal - a.librasRetal);
 
-  // ─── Agrupar por cliente ───
+  // Agrupar por cliente
   const porCli = {};
   fil.forEach(p => {
     const k = p.cliente || '(SIN CLIENTE)';
-    if (!porCli[k]) porCli[k] = {
-      cliente: k, pedidos: 0, unidades: 0,
-      librasEnt: 0, kilosEnt: 0,
-      librasRetal: 0, kilosRetal: 0
-    };
+    if (!porCli[k]) porCli[k] = { cliente: k, pedidos: 0, unidades: 0, librasEnt: 0, librasRetal: 0 };
     porCli[k].pedidos++;
-    porCli[k].unidades += parseFloat(p.unidades)||0;
-    porCli[k].librasEnt += parseFloat(p.libras_ent)||0;
-    porCli[k].kilosEnt += parseFloat(p.kilos_ent)||0;
+    porCli[k].unidades    += parseFloat(p.unidades)||0;
+    porCli[k].librasEnt   += parseFloat(p.libras_ent)||0;
     porCli[k].librasRetal += parseFloat(p.retal)||0;
   });
-  Object.values(porCli).forEach(r => { r.kilosRetal = r.librasRetal * LB_TO_KG; });
+  Object.values(porCli).forEach(r => { r.kilosEnt = r.librasEnt * LB_TO_KG; r.kilosRetal = r.librasRetal * LB_TO_KG; });
   const cliArr = Object.values(porCli).sort((a,b) => b.librasEnt - a.librasEnt);
 
-  // ─── Agrupar por mes ───
+  // Agrupar por mes
   const porMes = {};
   fil.forEach(p => {
     const k = (p.fecha_entrega || '').slice(0,7) || '(SIN FECHA)';
     if (!porMes[k]) porMes[k] = { mes: k, librasEnt: 0, librasRetal: 0 };
-    porMes[k].librasEnt += parseFloat(p.libras_ent)||0;
+    porMes[k].librasEnt   += parseFloat(p.libras_ent)||0;
     porMes[k].librasRetal += parseFloat(p.retal)||0;
   });
   const mesArr = Object.values(porMes).filter(m => m.mes !== '(SIN FECHA)').sort((a,b) => a.mes.localeCompare(b.mes));
 
-  // ─── Charts ───
-  const colorEnt = '#2d5a7b';
+  // Charts
+  const colorEnt   = '#2d5a7b';
   const colorRetal = '#9B2335';
   const colorKilos = '#7DA4C6';
 
-  // 1. Retal por producto (libras + kilos)
   destruirChart('ch-retal-prod');
   dashCharts['ch-retal-prod'] = new Chart(document.getElementById('ch-retal-prod'), {
     type: 'bar',
@@ -2185,7 +2352,6 @@ function renderDashboard() {
     options: chartBaseOptions({ horizontal: true })
   });
 
-  // 2. Entregas por cliente
   destruirChart('ch-entregas-cli');
   dashCharts['ch-entregas-cli'] = new Chart(document.getElementById('ch-entregas-cli'), {
     type: 'bar',
@@ -2199,84 +2365,56 @@ function renderDashboard() {
     options: chartBaseOptions({ horizontal: true })
   });
 
-  // 3. Evolución mensual
   destruirChart('ch-evolucion');
   dashCharts['ch-evolucion'] = new Chart(document.getElementById('ch-evolucion'), {
     type: 'line',
     data: {
       labels: mesArr.map(m => m.mes),
       datasets: [
-        { label: 'Libras entregadas', data: mesArr.map(m => +m.librasEnt.toFixed(2)), borderColor: colorEnt, backgroundColor: colorEnt+'33', tension: .3, fill: true },
+        { label: 'Libras entregadas', data: mesArr.map(m => +m.librasEnt.toFixed(2)),   borderColor: colorEnt,   backgroundColor: colorEnt+'33',   tension: .3, fill: true },
         { label: 'Libras de retal',   data: mesArr.map(m => +m.librasRetal.toFixed(2)), borderColor: colorRetal, backgroundColor: colorRetal+'33', tension: .3, fill: true }
       ]
     },
     options: chartBaseOptions({})
   });
 
-  // 4. % Retal por producto
-  const prodPct = prodArr
-    .map(r => ({ producto: r.producto, pct: r.librasTaj > 0 ? (r.librasRetal / r.librasTaj) * 100 : 0 }))
-    .sort((a,b) => b.pct - a.pct);
+  const prodPct = prodArr.map(r => ({ producto: r.producto, pct: r.librasTaj > 0 ? (r.librasRetal / r.librasTaj) * 100 : 0 })).sort((a,b) => b.pct - a.pct);
   destruirChart('ch-pct-prod');
   dashCharts['ch-pct-prod'] = new Chart(document.getElementById('ch-pct-prod'), {
     type: 'bar',
     data: {
       labels: prodPct.map(r => r.producto),
-      datasets: [{
-        label: '% Retal',
-        data: prodPct.map(r => +r.pct.toFixed(2)),
-        backgroundColor: prodPct.map(r => r.pct > 5 ? colorRetal : '#7D4F00')
-      }]
+      datasets: [{ label: '% Retal', data: prodPct.map(r => +r.pct.toFixed(2)), backgroundColor: prodPct.map(r => r.pct > 5 ? colorRetal : '#7D4F00') }]
     },
     options: chartBaseOptions({ horizontal: true, suffix: '%' })
   });
 
-  // ─── Tablas detalle ───
   document.getElementById('tbl-prod').innerHTML = `
-    <thead>
-      <tr>
-        <th>Producto</th>
-        <th class="num">Pedidos</th>
-        <th class="num">Unidades</th>
-        <th class="num">Retal (lb)</th>
-        <th class="num">Retal (kg)</th>
-        <th class="num">% Retal</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${prodArr.map(r => `
-        <tr>
-          <td><strong>${r.producto}</strong></td>
-          <td class="num">${r.pedidos}</td>
-          <td class="num">${r.unidades.toLocaleString('es-CO')}</td>
-          <td class="num" style="${r.librasRetal>0?'color:var(--danger)':''}">${fmtNum(r.librasRetal,2)}</td>
-          <td class="num" style="${r.librasRetal>0?'color:var(--danger)':''}">${fmtNum(r.kilosRetal,2)}</td>
-          <td class="num">${r.librasTaj>0?fmtNum((r.librasRetal/r.librasTaj)*100,2)+'%':'—'}</td>
-        </tr>
-      `).join('')}
-    </tbody>`;
+    <thead><tr>
+      <th>Producto</th><th class="num">Pedidos</th><th class="num">Unidades</th>
+      <th class="num">Retal (lb)</th><th class="num">Retal (kg)</th><th class="num">% Retal</th>
+    </tr></thead>
+    <tbody>${prodArr.map(r => `<tr>
+      <td><strong>${r.producto}</strong></td>
+      <td class="num">${r.pedidos}</td>
+      <td class="num">${r.unidades.toLocaleString('es-CO')}</td>
+      <td class="num" style="${r.librasRetal>0?'color:var(--danger)':''}">${fmtNum(r.librasRetal,2)}</td>
+      <td class="num" style="${r.librasRetal>0?'color:var(--danger)':''}">${fmtNum(r.kilosRetal,2)}</td>
+      <td class="num">${r.librasTaj>0?fmtNum((r.librasRetal/r.librasTaj)*100,2)+'%':'—'}</td>
+    </tr>`).join('')}</tbody>`;
 
   document.getElementById('tbl-cli').innerHTML = `
-    <thead>
-      <tr>
-        <th>Cliente</th>
-        <th class="num">Pedidos</th>
-        <th class="num">Libras ent.</th>
-        <th class="num">Kilos ent.</th>
-        <th class="num">Retal (lb)</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${cliArr.map(r => `
-        <tr>
-          <td><strong>${r.cliente}</strong></td>
-          <td class="num">${r.pedidos}</td>
-          <td class="num">${fmtNum(r.librasEnt,2)}</td>
-          <td class="num">${fmtNum(r.kilosEnt,2)}</td>
-          <td class="num" style="${r.librasRetal>0?'color:var(--danger)':''}">${fmtNum(r.librasRetal,2)}</td>
-        </tr>
-      `).join('')}
-    </tbody>`;
+    <thead><tr>
+      <th>Cliente</th><th class="num">Pedidos</th>
+      <th class="num">Libras ent.</th><th class="num">Kilos ent.</th><th class="num">Retal (lb)</th>
+    </tr></thead>
+    <tbody>${cliArr.map(r => `<tr>
+      <td><strong>${r.cliente}</strong></td>
+      <td class="num">${r.pedidos}</td>
+      <td class="num">${fmtNum(r.librasEnt,2)}</td>
+      <td class="num">${fmtNum(r.kilosEnt,2)}</td>
+      <td class="num" style="${r.librasRetal>0?'color:var(--danger)':''}">${fmtNum(r.librasRetal,2)}</td>
+    </tr>`).join('')}</tbody>`;
 }
 
 function chartBaseOptions(opts) {
@@ -2306,7 +2444,7 @@ function destruirChart(id) {
 }
 
 function limpiarFiltrosDash() {
-  dashFiltros = { mes: '', cliente: '' };
+  dashFiltros = { anio: '', mes: '', dia: '', cliente: '', producto: '', presentacion: '' };
   renderDashboard();
 }
 
@@ -2319,33 +2457,26 @@ function renderCintas() {
   const tbody = document.getElementById('cintas-body');
   const countEl = document.getElementById('c-count');
 
-  // Por defecto mostramos TODOS los códigos. Solo filtramos cuando hay término de búsqueda.
   let lista = cintas.slice();
 
   if (buscar) {
     lista = lista.filter(c => {
       const p = pedidos.find(x => x.id === c.id_pedido) || {};
-      const blob = [
-        c.codigo, c.cinta, c.dia_corte, c.prod_empleado,
-        p.cliente, p.producto, p.id, c.cantidad_cinta
-      ].join(' ').toLowerCase();
+      const blob = [c.codigo, c.cinta, c.dia_corte, c.prod_empleado, p.cliente, p.producto, p.id, c.cantidad_cinta].join(' ').toLowerCase();
       return blob.includes(buscar);
     });
   }
 
-  // Ordenar
   lista.sort((a, b) => {
     if (orden === 'codigo') return (a.codigo || '').localeCompare(b.codigo || '');
     const da = a.dia_corte || '';
     const db = b.dia_corte || '';
     if (orden === 'antiguos') return da.localeCompare(db);
-    return db.localeCompare(da); // recientes (default)
+    return db.localeCompare(da);
   });
 
   if (countEl) {
-    countEl.textContent = buscar
-      ? `${lista.length} de ${cintas.length} códigos`
-      : `${cintas.length} códigos en total`;
+    countEl.textContent = buscar ? `${lista.length} de ${cintas.length} códigos` : `${cintas.length} códigos en total`;
   }
 
   if (!lista.length) {
@@ -2396,7 +2527,6 @@ document.getElementById('modal-editar').addEventListener('click', function(e) {
 // ═══════════════════════════════════════════════════════════
 // INIT
 // ═══════════════════════════════════════════════════════════
-// Force uppercase on all text inputs
 document.addEventListener('input', function(e) {
   const el = e.target;
   if (el.tagName === 'INPUT' && el.type !== 'date' && el.type !== 'number' && !el.readOnly) {
@@ -2408,12 +2538,10 @@ document.addEventListener('input', function(e) {
 
 window.onload = () => {
   instalarListenersActividad();
-  // Wait for GIS library
   const waitForGoogle = setInterval(() => {
     if (window.google && google.accounts && google.accounts.oauth2) {
       clearInterval(waitForGoogle);
       initTokenClient();
-      // Intentar restaurar sesión persistida; si no hay, mostrar login
       const restaurada = intentarRestaurarSesion();
       if (!restaurada) {
         document.getElementById('loading').style.display = 'none';
@@ -2421,7 +2549,6 @@ window.onload = () => {
       }
     }
   }, 100);
-  // Timeout fallback
   setTimeout(() => {
     clearInterval(waitForGoogle);
     if (!accessToken && document.getElementById('app-root').style.display === 'none') {
