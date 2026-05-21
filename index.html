@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Seguimiento Producción — Inversiones Peniel</title>
 <link rel="icon" type="image/png" href="logo.png">
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 400'><rect width='400' height='400' fill='%23000'/><g fill='none' stroke='%23D7DEE3' stroke-width='14' stroke-linejoin='round' stroke-linecap='round'><circle cx='270' cy='160' r='110'/><path d='M30 340 L110 200 L140 240 L170 200 L210 250 L265 140 L325 240 L370 195 L380 340 Z'/></g></svg>">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%231b354a'/><text x='16' y='22' text-anchor='middle' font-family='Georgia,serif' font-weight='700' font-size='14' fill='%23ffffff' letter-spacing='1'>IP</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -1395,7 +1395,7 @@ function addCintaRow(data, containerId, counterRef) {
       <label>Observación</label>
       <input id="c-obs-${n}" placeholder="Notas..." value="${data?.obs_cinta||''}">
     </div>
-    <button class="btn btn-xs btn-danger" onclick="this.closest('.cinta-item').remove()" title="Quitar" style="align-self:flex-end;margin-bottom:1px">Quitar</button>`;
+    <button class="btn btn-xs btn-danger" onclick="this.closest('.cinta-item').remove()" title="Quitar" style="align-self:flex-end;margin-bottom:1px;font-size:15px;line-height:1;padding:4px 8px">✕</button>`;
   container.appendChild(div);
 }
 
@@ -1797,7 +1797,7 @@ function addEditCinta(data) {
       <label>Observación cinta</label>
       <input id="ec-obs-cinta-${n}" placeholder="Notas..." value="${data?.obs_cinta||''}">
     </div>
-    <button class="btn btn-xs btn-danger" onclick="quitarEditCinta(this)" style="align-self:flex-end;margin-bottom:1px">Quitar</button>`;
+    <button class="btn btn-xs btn-danger" onclick="quitarEditCinta(this)" style="align-self:flex-end;margin-bottom:1px;font-size:15px;line-height:1;padding:4px 8px">✕</button>`;
   container.appendChild(div);
 }
 
@@ -2200,6 +2200,17 @@ function renderDashboard() {
             </div>
           </div>
         </div>
+
+        <div class="dash-grid" style="grid-template-columns:1fr;">
+          <div class="dash-card">
+            <div class="dash-card-header">
+              <span class="dash-card-title">Retal por producto · desglose por lote</span>
+              <span class="dash-card-sub" id="retal-lote-sub">fecha de corte · lote del bloque · libras y kilos</span>
+            </div>
+            <div class="dash-card-body" style="overflow:auto;padding:0" id="retal-lote-body">
+            </div>
+          </div>
+        </div>
       </div>`;
 
     document.getElementById('dash-anio').addEventListener('change', e => { dashFiltros.anio = e.target.value; renderDashboard(); });
@@ -2415,6 +2426,62 @@ function renderDashboard() {
       <td class="num">${fmtNum(r.kilosEnt,2)}</td>
       <td class="num" style="${r.librasRetal>0?'color:var(--danger)':''}">${fmtNum(r.librasRetal,2)}</td>
     </tr>`).join('')}</tbody>`;
+
+  // ── Tabla retal por lote ──
+  // Agrupar pedidos por producto, dentro de cada producto listar fecha+lote+retal
+  const retalLoteBody = document.getElementById('retal-lote-body');
+  if (retalLoteBody) {
+    // Obtener productos con retal > 0, ordenados por total de retal desc
+    const prdsConRetal = prodArr.filter(r => r.librasRetal > 0);
+    if (!prdsConRetal.length) {
+      retalLoteBody.innerHTML = '<div class="empty-state" style="padding:24px"><div class="empty-state-text">Sin datos de retal en el período seleccionado</div></div>';
+    } else {
+      // Para cada producto sacar los pedidos con retal, ordenados por fecha
+      const cols = prdsConRetal.length;
+      const tableStyle = 'border-collapse:collapse;font-size:12px;min-width:220px;width:100%';
+      const thStyle = 'padding:8px 12px;text-align:left;font-size:10px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);white-space:nowrap';
+      const thNum = 'padding:8px 12px;text-align:right;font-size:10px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);white-space:nowrap';
+      const tdStyle = 'padding:7px 12px;border-bottom:1px solid var(--border);color:var(--text2)';
+      const tdNum = 'padding:7px 12px;border-bottom:1px solid var(--border);text-align:right;font-family:"DM Mono",monospace';
+
+      retalLoteBody.innerHTML = `<div style="display:grid;grid-template-columns:repeat(${Math.min(cols,3)},1fr);gap:0;overflow-x:auto">
+        ${prdsConRetal.map(prod => {
+          const pedsProd = fil
+            .filter(p => (p.producto||'') === prod.producto && (parseFloat(p.retal)||0) > 0)
+            .sort((a,b) => (a.fecha_entrega||'').localeCompare(b.fecha_entrega||''));
+          return `<div style="border-right:1px solid var(--border);min-width:220px">
+            <div style="padding:10px 14px;background:var(--surface2);border-bottom:2px solid var(--border);font-size:12px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.04em">${prod.producto}</div>
+            <table style="${tableStyle}">
+              <thead><tr>
+                <th style="${thStyle}">Fecha</th>
+                <th style="${thStyle}">Lote bloque</th>
+                <th style="${thNum}">Lbs retal</th>
+                <th style="${thNum}">Kgs retal</th>
+              </tr></thead>
+              <tbody>
+                ${pedsProd.map((p,i) => {
+                  const retal = parseFloat(p.retal)||0;
+                  const kgs = retal * 0.5;
+                  const bg = i%2===1 ? 'background:var(--bg)' : '';
+                  return `<tr style="${bg}">
+                    <td style="${tdStyle}">${fmtFecha(p.fecha_entrega)}</td>
+                    <td style="${tdStyle}">${p.lote ? fmtFecha(p.lote) : '—'}</td>
+                    <td style="${tdNum};color:var(--danger)">${fmtNum(retal,1)}</td>
+                    <td style="${tdNum};color:var(--danger)">${fmtNum(kgs,1)}</td>
+                  </tr>`;
+                }).join('')}
+                <tr style="background:var(--accent-light)">
+                  <td colspan="2" style="padding:7px 12px;font-weight:700;font-size:11px;color:var(--accent);border-top:2px solid var(--border)">TOTAL ${prod.producto.split(' ').pop()}</td>
+                  <td style="${tdNum};font-weight:700;color:var(--accent);border-top:2px solid var(--border)">${fmtNum(prod.librasRetal,1)}</td>
+                  <td style="${tdNum};font-weight:700;color:var(--accent);border-top:2px solid var(--border)">${fmtNum(prod.kilosRetal,1)}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>`;
+        }).join('')}
+      </div>`;
+    }
+  }
 }
 
 function chartBaseOptions(opts) {
