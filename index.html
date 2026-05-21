@@ -4,10 +4,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Seguimiento Producción — Inversiones Peniel</title>
+<link rel="icon" type="image/png" href="logo.png">
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 400 400'><rect width='400' height='400' fill='%23000'/><g fill='none' stroke='%23D7DEE3' stroke-width='14' stroke-linejoin='round' stroke-linecap='round'><circle cx='270' cy='160' r='110'/><path d='M30 340 L110 200 L140 240 L170 200 L210 250 L265 140 L325 240 L370 195 L380 340 Z'/></g></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://accounts.google.com/gsi/client"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <style>
 :root {
   --bg: #F7F6F2;
@@ -413,11 +416,16 @@ table.data-table {
   box-shadow: var(--shadow-md);
 }
 .auth-logo {
-  width: 56px; height: 56px; border-radius: 14px;
-  background: var(--accent); display: flex; align-items: center;
-  justify-content: center; margin: 0 auto 20px;
-  font-size: 24px;
+  width: 220px; height: 220px; border-radius: 18px;
+  background: #000;
+  display: flex; align-items: center; justify-content: center;
+  margin: 0 auto 24px;
+  padding: 12px;
+  box-shadow: var(--shadow-md);
+  overflow: hidden;
 }
+.auth-logo img,
+.auth-logo svg { width: 100%; height: 100%; object-fit: contain; display: block; }
 .auth-title { font-size: 20px; font-weight: 600; margin-bottom: 6px; }
 .auth-sub { font-size: 13px; color: var(--text2); margin-bottom: 28px; line-height: 1.6; }
 
@@ -445,6 +453,59 @@ table.data-table {
   padding: 1px 6px; font-size: 11px; color: var(--text2);
   font-family: 'DM Mono', monospace;
 }
+
+/* ── Dashboard ── */
+.dash-metrics {
+  display: grid; grid-template-columns: repeat(4, 1fr);
+  gap: 12px; margin-bottom: 20px;
+}
+.dash-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+  margin-bottom: 16px;
+}
+.dash-grid-full { grid-template-columns: 1fr; }
+.dash-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 0; display: flex; flex-direction: column;
+}
+.dash-card-header {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: space-between;
+}
+.dash-card-title { font-size: 13px; font-weight: 600; color: var(--text); }
+.dash-card-sub { font-size: 11px; color: var(--text3); }
+.dash-card-body { padding: 16px 18px; flex: 1; min-height: 0; }
+.chart-wrap { position: relative; width: 100%; height: 280px; }
+.chart-wrap-tall { height: 360px; }
+
+.dash-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.dash-table th {
+  font-size: 10px; font-weight: 600; color: var(--text3);
+  text-transform: uppercase; letter-spacing: .06em;
+  padding: 6px 8px; text-align: left; border-bottom: 1px solid var(--border);
+}
+.dash-table td {
+  padding: 7px 8px; border-bottom: 1px solid var(--border);
+}
+.dash-table tbody tr:last-child td { border-bottom: none; }
+.dash-table .num { text-align: right; font-family: 'DM Mono', monospace; }
+
+.dash-filter-bar {
+  display: flex; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; align-items: center;
+}
+.dash-filter-bar select, .dash-filter-bar input {
+  padding: 7px 11px; border: 1px solid var(--border2);
+  border-radius: var(--radius); background: var(--surface);
+  color: var(--text); font-family: 'DM Sans', sans-serif; font-size: 13px;
+}
+
+@media (max-width: 1100px) {
+  .dash-metrics { grid-template-columns: repeat(2, 1fr); }
+  .dash-grid { grid-template-columns: 1fr; }
+}
 </style>
 </head>
 <body>
@@ -458,7 +519,9 @@ table.data-table {
 <!-- Auth -->
 <div class="auth-screen" id="auth-screen" style="display:none">
   <div class="auth-card">
-    <div class="auth-logo"></div>
+    <div class="auth-logo" aria-label="Inversiones Peniel" id="auth-logo-box">
+      <img src="logo.png" alt="Inversiones Peniel" onerror="mostrarLogoFallback()">
+    </div>
     <div class="auth-title">Seguimiento Producción</div>
     <div class="auth-sub">Inversiones Peniel — Planta Mosquera<br>Inicia sesión con tu cuenta de Google para continuar.</div>
     <button class="btn btn-primary" id="btn-login" onclick="iniciarLogin()" style="width:100%;justify-content:center;padding:12px;font-size:14px;margin-top:8px">
@@ -481,20 +544,30 @@ table.data-table {
     <div class="sidebar-section">
       <div class="sidebar-section-label">Producción</div>
       <button class="nav-item active" onclick="showView('nuevo')" id="nav-nuevo">
-        <span class="nav-icon">＋</span> Nuevo pedido
+        Nuevo pedido
       </button>
       <button class="nav-item" onclick="showView('historial')" id="nav-historial">
-        <span class="nav-icon">☰</span> Historial diario
+        Historial diario
       </button>
     </div>
 
     <div class="sidebar-section">
       <div class="sidebar-section-label">Reportes</div>
+      <button class="nav-item" onclick="showView('dashboard')" id="nav-dashboard">
+        Dashboard
+      </button>
       <button class="nav-item" onclick="showView('resumen')" id="nav-resumen">
-        <span class="nav-icon">◎</span> Por cliente
+        Por cliente
       </button>
       <button class="nav-item" onclick="showView('cintas')" id="nav-cintas">
-        <span class="nav-icon">⊟</span> Búsqueda de cintas
+        Búsqueda de códigos
+      </button>
+    </div>
+
+    <div class="sidebar-section">
+      <div class="sidebar-section-label">Sesión</div>
+      <button class="nav-item" onclick="cerrarSesion()" id="nav-logout">
+        Cerrar sesión
       </button>
     </div>
 
@@ -515,7 +588,7 @@ table.data-table {
       </div>
       <div class="topbar-right">
         <div id="sync-status" class="text-muted" style="font-size:11px"></div>
-        <button class="btn btn-sm" onclick="loadData()">↻ Actualizar</button>
+        <button class="btn btn-sm" onclick="loadData()">Actualizar</button>
       </div>
     </div>
 
@@ -743,7 +816,7 @@ table.data-table {
       <div style="display:flex; justify-content:flex-end; gap:10px; padding-bottom:32px">
         <button class="btn" onclick="limpiarForm()">Limpiar</button>
         <button class="btn btn-primary" onclick="guardarPedido()" id="btn-guardar">
-          ✓ Guardar pedido
+          Guardar pedido
         </button>
       </div>
     </div>
@@ -753,7 +826,7 @@ table.data-table {
       <div class="metrics-grid" id="metrics-grid"></div>
 
       <div class="filter-bar">
-        <input id="h-buscar" placeholder="🔍  Buscar cliente, producto..." oninput="renderHistorial()">
+        <input id="h-buscar" placeholder="Buscar cliente, producto..." oninput="renderHistorial()">
         <select id="h-cliente" onchange="renderHistorial()">
           <option value="">Todos los clientes</option>
         </select>
@@ -785,7 +858,7 @@ table.data-table {
               </tr>
             </thead>
             <tbody id="hist-body">
-              <tr><td colspan="10" class="empty-state"><div class="empty-state-icon">⟳</div><div class="empty-state-text">Cargando datos...</div></td></tr>
+              <tr><td colspan="10" class="empty-state"><div class="empty-state-text">Cargando datos...</div></td></tr>
             </tbody>
           </table>
         </div>
@@ -795,21 +868,36 @@ table.data-table {
     <!-- ═══ VIEW: RESUMEN CLIENTE ═══ -->
     <div class="view" id="view-resumen">
       <div id="resumen-content">
-        <div class="empty-state"><div class="empty-state-icon">◎</div><div class="empty-state-text">Cargando resumen...</div></div>
+        <div class="empty-state"><div class="empty-state-text">Cargando resumen...</div></div>
       </div>
     </div>
 
-    <!-- ═══ VIEW: BÚSQUEDA CINTAS ═══ -->
+    <!-- ═══ VIEW: DASHBOARD ═══ -->
+    <div class="view" id="view-dashboard">
+      <div id="dashboard-content">
+        <div class="empty-state"><div class="empty-state-text">Cargando dashboard...</div></div>
+      </div>
+    </div>
+
+    <!-- ═══ VIEW: BÚSQUEDA CÓDIGOS ═══ -->
     <div class="view" id="view-cintas">
       <div class="filter-bar">
-        <input id="c-buscar" placeholder="🔍  Buscar por código de cinta..." oninput="renderCintas()" style="flex:1">
+        <input id="c-buscar" placeholder="Buscar por código, cliente, producto..." oninput="renderCintas()" style="flex:1">
+        <select id="c-orden" onchange="renderCintas()">
+          <option value="recientes">Más recientes primero</option>
+          <option value="antiguos">Más antiguos primero</option>
+          <option value="codigo">Código (A→Z)</option>
+        </select>
+        <span id="c-count" class="text-muted" style="font-size:12px;margin-left:auto"></span>
       </div>
       <div class="card" style="padding:0;overflow:hidden">
         <div class="table-wrap">
           <table class="data-table">
             <thead>
               <tr>
-                <th>Código / Cinta / Cantidad</th>
+                <th>Código</th>
+                <th>Cinta</th>
+                <th>Cantidad</th>
                 <th>Cliente</th>
                 <th>Producto</th>
                 <th>Día de corte</th>
@@ -819,7 +907,7 @@ table.data-table {
               </tr>
             </thead>
             <tbody id="cintas-body">
-              <tr><td colspan="7" class="empty-state"><div class="empty-state-text">Ingresa un código para buscar</div></td></tr>
+              <tr><td colspan="9" class="empty-state"><div class="empty-state-text">Cargando códigos...</div></td></tr>
             </tbody>
           </table>
         </div>
@@ -834,7 +922,7 @@ table.data-table {
   <div class="modal">
     <div class="modal-header">
       <div class="modal-title" id="modal-titulo">Editar pedido</div>
-      <button class="btn-icon" onclick="closeModal()">✕</button>
+      <button class="btn btn-sm" onclick="closeModal()">Cerrar</button>
     </div>
     <div class="modal-body" id="modal-body"></div>
     <div class="modal-footer">
@@ -859,8 +947,15 @@ const CLIENT_ID = '472930002147-of08gfnkeuu57gsbpgl48g5b20bvk3sp.apps.googleuser
 const SCOPES = 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/userinfo.profile';
 const API_KEY = ''; // no se usa con OAuth
 
+// Sesión: tiempo máximo de inactividad antes de cerrar sesión automáticamente (en ms)
+// 8 horas — el usuario puede refrescar la página dentro de esta ventana sin perder la sesión
+const INACTIVITY_TIMEOUT_MS = 8 * 60 * 60 * 1000;
+const SESSION_STORAGE_KEY = 'peniel_session_v1';
+let inactivityTimerId = null;
+
 let accessToken = null;
 let userInfo = null;
+let tokenExpiresAt = 0;
 let pedidos = [];
 let cintas = [];
 let cintaCount = 0;
@@ -868,9 +963,29 @@ let editingId = null;
 let editCintaCount = 0;
 
 // ═══════════════════════════════════════════════════════════
-// AUTH — Google Identity Services Token Client
+// LOGO FALLBACK (si logo.png no existe, mostramos SVG inline)
+// ═══════════════════════════════════════════════════════════
+function mostrarLogoFallback() {
+  const box = document.getElementById('auth-logo-box');
+  if (!box) return;
+  box.innerHTML = `
+    <svg viewBox="0 0 400 460" xmlns="http://www.w3.org/2000/svg">
+      <g fill="none" stroke="#D7DEE3" stroke-width="10" stroke-linejoin="round" stroke-linecap="round">
+        <circle cx="270" cy="160" r="110"/>
+        <path d="M30 340 L110 200 L140 240 L170 200 L210 250 L265 140 L325 240 L370 195 L380 340 Z"/>
+      </g>
+      <text x="200" y="395" text-anchor="middle" fill="#D7DEE3"
+            font-family="DM Sans, sans-serif" font-size="26" letter-spacing="6">INVERSIONES</text>
+      <text x="200" y="445" text-anchor="middle" fill="#D7DEE3"
+            font-family="DM Sans, sans-serif" font-weight="700" font-size="58" letter-spacing="10">PENIEL</text>
+    </svg>`;
+}
+
+// ═══════════════════════════════════════════════════════════
+// AUTH — Google Identity Services Token Client + persistencia
 // ═══════════════════════════════════════════════════════════
 let tokenClient = null;
+let silentReauthPending = false;
 
 function iniciarLogin() {
   const errEl = document.getElementById('auth-error');
@@ -880,6 +995,7 @@ function iniciarLogin() {
     errEl.style.display = 'block';
     return;
   }
+  // Primera vez requiere consentimiento; luego solo refresh silencioso
   tokenClient.requestAccessToken({ prompt: 'consent' });
 }
 
@@ -889,25 +1005,172 @@ function initTokenClient() {
     scope: SCOPES,
     callback: (tokenResponse) => {
       if (tokenResponse.error) {
+        if (silentReauthPending) {
+          // Si falló el refresh silencioso, mostramos login
+          silentReauthPending = false;
+          forzarLogout('Tu sesión expiró. Inicia sesión nuevamente.');
+          return;
+        }
         document.getElementById('auth-error').textContent = 'Error: ' + tokenResponse.error;
         document.getElementById('auth-error').style.display = 'block';
         return;
       }
+      silentReauthPending = false;
       accessToken = tokenResponse.access_token;
+      // expires_in viene en segundos; restamos 60s de margen
+      const expiresInSec = parseInt(tokenResponse.expires_in, 10) || 3600;
+      tokenExpiresAt = Date.now() + (expiresInSec - 60) * 1000;
+
+      // Si ya tenemos userInfo de una sesión persistida, no la pedimos otra vez
+      if (userInfo) {
+        actualizarUIUsuario(userInfo);
+        guardarSesion();
+        showApp();
+        return;
+      }
       // Get user info
       fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
         headers: { Authorization: 'Bearer ' + accessToken }
       }).then(r => r.json()).then(info => {
         userInfo = info;
-        const name = info.name || info.email || 'Usuario';
-        document.getElementById('user-name').textContent = name.split(' ')[0];
-        document.getElementById('user-avatar').textContent = name[0].toUpperCase();
+        actualizarUIUsuario(info);
+        guardarSesion();
       }).catch(() => {
-        document.getElementById('user-name').textContent = 'Usuario';
-        document.getElementById('user-avatar').textContent = 'U';
-      });
-      showApp();
+        userInfo = { name: 'Usuario' };
+        actualizarUIUsuario(userInfo);
+        guardarSesion();
+      }).finally(() => showApp());
     },
+  });
+}
+
+function actualizarUIUsuario(info) {
+  const name = info.name || info.email || 'Usuario';
+  document.getElementById('user-name').textContent = name.split(' ')[0];
+  document.getElementById('user-avatar').textContent = (name[0] || 'U').toUpperCase();
+}
+
+function guardarSesion() {
+  try {
+    const payload = {
+      accessToken: accessToken,
+      tokenExpiresAt: tokenExpiresAt,
+      userInfo: userInfo,
+      lastActivity: Date.now(),
+    };
+    localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(payload));
+  } catch (e) { /* localStorage no disponible: ignorar */ }
+}
+
+function leerSesion() {
+  try {
+    const raw = localStorage.getItem(SESSION_STORAGE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (e) { return null; }
+}
+
+function limpiarSesion() {
+  try { localStorage.removeItem(SESSION_STORAGE_KEY); } catch(e){}
+  accessToken = null;
+  userInfo = null;
+  tokenExpiresAt = 0;
+}
+
+function intentarRestaurarSesion() {
+  const s = leerSesion();
+  if (!s) return false;
+
+  // ¿Pasó la ventana de inactividad?
+  const inactivoMs = Date.now() - (s.lastActivity || 0);
+  if (inactivoMs > INACTIVITY_TIMEOUT_MS) {
+    limpiarSesion();
+    return false;
+  }
+
+  // Sí hay sesión válida en el almacenamiento
+  userInfo = s.userInfo || null;
+  tokenExpiresAt = s.tokenExpiresAt || 0;
+  accessToken = s.accessToken || null;
+
+  // Si el token de Google sigue vigente: úsalo
+  if (accessToken && Date.now() < tokenExpiresAt) {
+    if (userInfo) actualizarUIUsuario(userInfo);
+    guardarSesion(); // refresca lastActivity
+    showApp();
+    return true;
+  }
+
+  // Token expirado pero el usuario sigue activo: refresh silencioso
+  if (tokenClient) {
+    silentReauthPending = true;
+    try {
+      tokenClient.requestAccessToken({ prompt: '' });
+      // Mientras llega el callback mostramos loading
+      document.getElementById('loading').style.display = 'flex';
+      document.getElementById('auth-screen').style.display = 'none';
+      return true;
+    } catch (e) {
+      silentReauthPending = false;
+      limpiarSesion();
+      return false;
+    }
+  }
+  return false;
+}
+
+function forzarLogout(motivo) {
+  limpiarSesion();
+  detenerTemporizadorInactividad();
+  document.getElementById('app-root').style.display = 'none';
+  document.getElementById('loading').style.display = 'none';
+  document.getElementById('auth-screen').style.display = 'flex';
+  if (motivo) {
+    const errEl = document.getElementById('auth-error');
+    errEl.textContent = motivo;
+    errEl.style.display = 'block';
+  }
+}
+
+function cerrarSesion() {
+  if (!confirm('¿Cerrar sesión?')) return;
+  // Revocar el token en Google (best effort)
+  if (accessToken && window.google?.accounts?.oauth2?.revoke) {
+    try { google.accounts.oauth2.revoke(accessToken, () => {}); } catch(e){}
+  }
+  forzarLogout(null);
+}
+
+function registrarActividad() {
+  if (!accessToken) return;
+  guardarSesion(); // actualiza lastActivity
+  reiniciarTemporizadorInactividad();
+}
+
+function reiniciarTemporizadorInactividad() {
+  detenerTemporizadorInactividad();
+  inactivityTimerId = setTimeout(() => {
+    forzarLogout('Tu sesión se cerró por inactividad. Inicia sesión nuevamente.');
+  }, INACTIVITY_TIMEOUT_MS);
+}
+
+function detenerTemporizadorInactividad() {
+  if (inactivityTimerId) { clearTimeout(inactivityTimerId); inactivityTimerId = null; }
+}
+
+function instalarListenersActividad() {
+  // Registrar actividad ante interacción del usuario (throttle 30s)
+  let lastSave = 0;
+  const handler = () => {
+    const now = Date.now();
+    if (now - lastSave > 30000) { lastSave = now; registrarActividad(); }
+  };
+  ['click','keydown','mousemove','scroll','touchstart'].forEach(ev => {
+    document.addEventListener(ev, handler, { passive: true });
+  });
+  // Cuando la pestaña vuelve a estar visible, refrescamos lastActivity
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden) registrarActividad();
   });
 }
 
@@ -919,7 +1182,9 @@ function showApp() {
   document.getElementById('topbar-date').textContent = today.toLocaleDateString('es-CO', {
     weekday: 'long', day: 'numeric', month: 'long'
   });
-  document.getElementById('f-fecha').value = today.toISOString().split('T')[0];
+  const fFecha = document.getElementById('f-fecha');
+  if (fFecha && !fFecha.value) fFecha.value = today.toISOString().split('T')[0];
+  reiniciarTemporizadorInactividad();
   loadData();
 }
 
@@ -931,16 +1196,46 @@ function showAuth() {
 // ═══════════════════════════════════════════════════════════
 // SHEETS API
 // ═══════════════════════════════════════════════════════════
+async function asegurarTokenVigente() {
+  if (accessToken && Date.now() < tokenExpiresAt) return true;
+  if (!tokenClient) return false;
+  // Refresh silencioso
+  return new Promise(resolve => {
+    silentReauthPending = true;
+    const prev = tokenClient.callback;
+    tokenClient.callback = (resp) => {
+      tokenClient.callback = prev; // restaurar callback original
+      if (resp.error || !resp.access_token) {
+        silentReauthPending = false;
+        forzarLogout('Tu sesión expiró. Inicia sesión nuevamente.');
+        resolve(false);
+        return;
+      }
+      accessToken = resp.access_token;
+      const expiresInSec = parseInt(resp.expires_in, 10) || 3600;
+      tokenExpiresAt = Date.now() + (expiresInSec - 60) * 1000;
+      silentReauthPending = false;
+      guardarSesion();
+      resolve(true);
+    };
+    try { tokenClient.requestAccessToken({ prompt: '' }); }
+    catch (e) { tokenClient.callback = prev; silentReauthPending = false; resolve(false); }
+  });
+}
+
 async function sheetsGet(range) {
+  await asegurarTokenVigente();
   const r = await fetch(
     `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}`,
     { headers: { Authorization: 'Bearer ' + accessToken } }
   );
+  if (r.status === 401) { forzarLogout('Tu sesión expiró. Inicia sesión nuevamente.'); throw new Error('401'); }
   if (!r.ok) throw new Error('Error leyendo Sheets: ' + r.status);
   return r.json();
 }
 
 async function sheetsAppend(range, values) {
+  await asegurarTokenVigente();
   const r = await fetch(
     `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
     {
@@ -949,11 +1244,13 @@ async function sheetsAppend(range, values) {
       body: JSON.stringify({ values })
     }
   );
+  if (r.status === 401) { forzarLogout('Tu sesión expiró. Inicia sesión nuevamente.'); throw new Error('401'); }
   if (!r.ok) throw new Error('Error escribiendo Sheets: ' + r.status);
   return r.json();
 }
 
 async function sheetsUpdate(range, values) {
+  await asegurarTokenVigente();
   const r = await fetch(
     `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`,
     {
@@ -962,6 +1259,7 @@ async function sheetsUpdate(range, values) {
       body: JSON.stringify({ values })
     }
   );
+  if (r.status === 401) { forzarLogout('Tu sesión expiró. Inicia sesión nuevamente.'); throw new Error('401'); }
   if (!r.ok) throw new Error('Error actualizando Sheets: ' + r.status);
   return r.json();
 }
@@ -1016,6 +1314,8 @@ async function loadData() {
 
     if (document.getElementById('view-historial').classList.contains('active')) renderHistorial();
     if (document.getElementById('view-resumen').classList.contains('active')) renderResumen();
+    if (document.getElementById('view-cintas').classList.contains('active')) renderCintas();
+    if (document.getElementById('view-dashboard').classList.contains('active')) renderDashboard();
 
   } catch(e) {
     setSyncStatus('Error al sincronizar');
@@ -1033,16 +1333,20 @@ function setSyncStatus(msg) {
 function showView(v) {
   document.querySelectorAll('.view').forEach(el => el.classList.remove('active'));
   document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-  document.getElementById('view-' + v).classList.add('active');
-  document.getElementById('nav-' + v).classList.add('active');
+  const viewEl = document.getElementById('view-' + v);
+  const navEl = document.getElementById('nav-' + v);
+  if (viewEl) viewEl.classList.add('active');
+  if (navEl) navEl.classList.add('active');
   const titles = {
     nuevo: 'Nuevo pedido', historial: 'Historial diario',
-    resumen: 'Resumen por cliente', cintas: 'Búsqueda de cintas'
+    resumen: 'Resumen por cliente', cintas: 'Búsqueda de códigos',
+    dashboard: 'Dashboard de producción'
   };
   document.getElementById('topbar-title').textContent = titles[v] || v;
   if (v === 'historial') renderHistorial();
   if (v === 'resumen') renderResumen();
   if (v === 'cintas') renderCintas();
+  if (v === 'dashboard') renderDashboard();
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1089,7 +1393,7 @@ function addCintaRow(data, containerId, counterRef) {
       <label>Observación</label>
       <input id="c-obs-${n}" placeholder="Notas..." value="${data?.obs_cinta||''}">
     </div>
-    <button class="btn-icon" onclick="this.closest('.cinta-item').remove()" title="Quitar" style="align-self:flex-end;margin-bottom:1px;color:var(--danger)">✕</button>`;
+    <button class="btn btn-xs btn-danger" onclick="this.closest('.cinta-item').remove()" title="Quitar" style="align-self:flex-end;margin-bottom:1px">Quitar</button>`;
   container.appendChild(div);
 }
 
@@ -1172,14 +1476,14 @@ async function guardarPedido() {
       await sheetsAppend('CINTAS!A:J', cRows);
     }
 
-    toast('Pedido guardado correctamente ✓', 'success');
+    toast('Pedido guardado correctamente', 'success');
     limpiarForm();
     await loadData();
   } catch(e) {
     toast('Error al guardar: ' + e.message, 'error');
   }
 
-  btn.disabled = false; btn.textContent = '✓ Guardar pedido';
+  btn.disabled = false; btn.textContent = 'Guardar pedido';
 }
 
 
@@ -1311,7 +1615,7 @@ function renderHistorial() {
 
   const tbody = document.getElementById('hist-body');
   if (!fil.length) {
-    tbody.innerHTML = `<tr><td colspan="10" class="empty-state"><div class="empty-state-icon">○</div><div class="empty-state-text">No hay registros con estos filtros</div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="10" class="empty-state"><div class="empty-state-text">No hay registros con estos filtros</div></td></tr>`;
     return;
   }
 
@@ -1327,7 +1631,7 @@ function renderHistorial() {
     const cintasRows = pCintas.map((c,i) => {
       const isLast = i === pCintas.length - 1;
       return `<tr class="row-cinta${isLast?' row-cinta-last':''}" data-pedido="${p.id}" style="display:none">
-        <td style="color:var(--text3);font-size:11px">↳ Día ${i+1}</td>
+        <td style="color:var(--text3);font-size:11px">Día ${i+1}</td>
         <td colspan="2" style="color:var(--text2)">${c.dia_corte}</td>
         <td colspan="2" style="color:var(--text2)">${c.prod_empleado}</td>
         <td colspan="3" class="mono" style="color:var(--text)">${c.codigo}</td>
@@ -1379,7 +1683,7 @@ function abrirEditar(id) {
   const pCintas = cintas.filter(c => c.id_pedido === id);
   const esAbierto = p.estado !== 'CERRADO';
 
-  document.getElementById('modal-titulo').textContent = `${p.cliente} — ${p.producto}` + (!esAbierto ? '  🔒 CERRADO' : '');
+  document.getElementById('modal-titulo').textContent = `${p.cliente} — ${p.producto}` + (!esAbierto ? '  (CERRADO)' : '');
   document.getElementById('btn-estado-label').textContent = esAbierto ? 'Cerrar pedido' : 'Reabrir pedido';
 
   document.getElementById('modal-body').innerHTML = `
@@ -1444,7 +1748,7 @@ function abrirEditar(id) {
       // Show notice
       const notice = document.createElement('div');
       notice.style.cssText = 'background:var(--warn-light);border:1px solid #ffe08a;border-radius:8px;padding:10px 14px;font-size:12px;color:var(--warn);margin-bottom:16px;display:flex;align-items:center;gap:8px';
-      notice.innerHTML = '<span style="font-size:16px">🔒</span> Este pedido está cerrado. Para editarlo, primero usa el botón <strong>Reabrir pedido</strong>.';
+      notice.innerHTML = 'Este pedido está cerrado. Para editarlo, primero usa el botón <strong>Reabrir pedido</strong>.';
       modalBody.insertBefore(notice, modalBody.firstChild);
     } else {
       if (saveBtn) saveBtn.style.display = '';
@@ -1487,7 +1791,7 @@ function addEditCinta(data) {
       <label>Observación cinta</label>
       <input id="ec-obs-cinta-${n}" placeholder="Notas..." value="${data?.obs_cinta||''}">
     </div>
-    <button class="btn-icon" onclick="this.closest('.cinta-item').remove()" style="align-self:flex-end;margin-bottom:1px;color:var(--danger)">✕</button>`;
+    <button class="btn btn-xs btn-danger" onclick="this.closest('.cinta-item').remove()" style="align-self:flex-end;margin-bottom:1px">Quitar</button>`;
   container.appendChild(div);
 }
 
@@ -1572,7 +1876,7 @@ async function guardarEdicion() {
       await sheetsAppend('CINTAS!A:I', newCintas);
     }
 
-    toast('Cambios guardados ✓', 'success');
+    toast('Cambios guardados', 'success');
     closeModal();
     await loadData();
   } catch(e) {
@@ -1594,7 +1898,7 @@ async function cambiarEstado() {
     }
     if (rowNum < 0) return;
     await sheetsUpdate(`PEDIDOS!AG${rowNum}:AJ${rowNum}`, [[nuevoEstado, p.fecha_creacion, new Date().toISOString(), '']]);
-    toast(`Pedido marcado como ${nuevoEstado} ✓`, 'success');
+    toast(`Pedido marcado como ${nuevoEstado}`, 'success');
     closeModal();
     await loadData();
   } catch(e) {
@@ -1644,34 +1948,423 @@ function renderResumen() {
 }
 
 // ═══════════════════════════════════════════════════════════
-// BÚSQUEDA CINTAS
+// DASHBOARD
+// ═══════════════════════════════════════════════════════════
+// Mapa global de charts vivos para destruirlos antes de re-renderizar
+const dashCharts = {};
+// Filtros del dashboard (estado en memoria)
+let dashFiltros = { mes: '', cliente: '' };
+
+// Conversión: en este sistema 1 libra ≈ 0.5 kg (consistente con calcularCampos)
+const LB_TO_KG = 0.5;
+
+function fmtNum(n, dec = 1) {
+  if (!isFinite(n)) return '0';
+  return Number(n).toLocaleString('es-CO', { minimumFractionDigits: dec, maximumFractionDigits: dec });
+}
+
+function renderDashboard() {
+  const cont = document.getElementById('dashboard-content');
+  if (!pedidos.length) {
+    cont.innerHTML = `<div class="empty-state"><div class="empty-state-text">Aún no hay pedidos para mostrar en el dashboard</div></div>`;
+    return;
+  }
+
+  // Inyectar estructura una sola vez
+  if (!document.getElementById('dash-mounted')) {
+    cont.innerHTML = `
+      <div id="dash-mounted">
+        <div class="dash-filter-bar">
+          <select id="dash-mes"><option value="">Todos los meses</option></select>
+          <select id="dash-cliente"><option value="">Todos los clientes</option></select>
+          <button class="btn btn-sm" onclick="limpiarFiltrosDash()">Limpiar filtros</button>
+          <span id="dash-info" class="text-muted" style="font-size:12px;margin-left:auto"></span>
+        </div>
+
+        <div class="dash-metrics" id="dash-metrics"></div>
+
+        <div class="dash-grid">
+          <div class="dash-card">
+            <div class="dash-card-header">
+              <span class="dash-card-title">Retal por producto</span>
+              <span class="dash-card-sub">libras y kilos</span>
+            </div>
+            <div class="dash-card-body"><div class="chart-wrap"><canvas id="ch-retal-prod"></canvas></div></div>
+          </div>
+          <div class="dash-card">
+            <div class="dash-card-header">
+              <span class="dash-card-title">Entregas por cliente</span>
+              <span class="dash-card-sub">libras y kilos entregados</span>
+            </div>
+            <div class="dash-card-body"><div class="chart-wrap"><canvas id="ch-entregas-cli"></canvas></div></div>
+          </div>
+        </div>
+
+        <div class="dash-grid">
+          <div class="dash-card">
+            <div class="dash-card-header">
+              <span class="dash-card-title">Evolución mensual</span>
+              <span class="dash-card-sub">libras entregadas vs libras de retal</span>
+            </div>
+            <div class="dash-card-body"><div class="chart-wrap"><canvas id="ch-evolucion"></canvas></div></div>
+          </div>
+          <div class="dash-card">
+            <div class="dash-card-header">
+              <span class="dash-card-title">% Retal promedio por producto</span>
+              <span class="dash-card-sub">eficiencia: menor es mejor</span>
+            </div>
+            <div class="dash-card-body"><div class="chart-wrap"><canvas id="ch-pct-prod"></canvas></div></div>
+          </div>
+        </div>
+
+        <div class="dash-grid">
+          <div class="dash-card">
+            <div class="dash-card-header">
+              <span class="dash-card-title">Detalle por producto</span>
+              <span class="dash-card-sub">unidades, retal y participación</span>
+            </div>
+            <div class="dash-card-body" style="overflow:auto">
+              <table class="dash-table" id="tbl-prod"></table>
+            </div>
+          </div>
+          <div class="dash-card">
+            <div class="dash-card-header">
+              <span class="dash-card-title">Detalle por cliente</span>
+              <span class="dash-card-sub">pedidos, libras y kilos entregados</span>
+            </div>
+            <div class="dash-card-body" style="overflow:auto">
+              <table class="dash-table" id="tbl-cli"></table>
+            </div>
+          </div>
+        </div>
+      </div>`;
+
+    document.getElementById('dash-mes').addEventListener('change', e => { dashFiltros.mes = e.target.value; renderDashboard(); });
+    document.getElementById('dash-cliente').addEventListener('change', e => { dashFiltros.cliente = e.target.value; renderDashboard(); });
+  }
+
+  // Poblar selects (mantener selección)
+  const meses = [...new Set(pedidos.map(p => p.fecha_entrega?.slice(0,7)).filter(Boolean))].sort().reverse();
+  const clientes = [...new Set(pedidos.map(p => p.cliente).filter(Boolean))].sort();
+  const selMes = document.getElementById('dash-mes');
+  selMes.innerHTML = '<option value="">Todos los meses</option>' +
+    meses.map(m => `<option value="${m}"${m === dashFiltros.mes ? ' selected' : ''}>${m}</option>`).join('');
+  const selCli = document.getElementById('dash-cliente');
+  selCli.innerHTML = '<option value="">Todos los clientes</option>' +
+    clientes.map(c => `<option value="${c}"${c === dashFiltros.cliente ? ' selected' : ''}>${c}</option>`).join('');
+
+  // Filtrar pedidos
+  const fil = pedidos.filter(p => {
+    if (dashFiltros.mes && !p.fecha_entrega?.startsWith(dashFiltros.mes)) return false;
+    if (dashFiltros.cliente && p.cliente !== dashFiltros.cliente) return false;
+    return true;
+  });
+
+  document.getElementById('dash-info').textContent =
+    `${fil.length} pedido${fil.length===1?'':'s'} considerados`;
+
+  // ─── KPIs ───
+  const totLibrasEnt = fil.reduce((a,p) => a + (parseFloat(p.libras_ent)||0), 0);
+  const totKilosEnt = fil.reduce((a,p) => a + (parseFloat(p.kilos_ent)||0), 0);
+  const totLibrasRetal = fil.reduce((a,p) => a + (parseFloat(p.retal)||0), 0);
+  const totKilosRetal = totLibrasRetal * LB_TO_KG;
+  const totLibrasTaj = fil.reduce((a,p) => a + (parseFloat(p.libras_taj)||0), 0);
+  const totUnidades = fil.reduce((a,p) => a + (parseFloat(p.unidades)||0), 0);
+  const pctRetalProm = totLibrasTaj > 0 ? (totLibrasRetal / totLibrasTaj) * 100 : 0;
+  const clientesActivos = new Set(fil.map(p => p.cliente).filter(Boolean)).size;
+  const productosActivos = new Set(fil.map(p => p.producto).filter(Boolean)).size;
+  const abiertos = fil.filter(p => p.estado === 'ABIERTO').length;
+
+  document.getElementById('dash-metrics').innerHTML = `
+    <div class="metric-card">
+      <div class="metric-label">Pedidos</div>
+      <div class="metric-value">${fil.length}</div>
+      <div class="metric-sub">${abiertos} abiertos</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Libras entregadas</div>
+      <div class="metric-value">${fmtNum(totLibrasEnt, 1)}</div>
+      <div class="metric-sub">${fmtNum(totKilosEnt, 1)} kg</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Retal total</div>
+      <div class="metric-value" style="${totLibrasRetal>0?'color:var(--danger)':''}">${fmtNum(totLibrasRetal, 1)} lb</div>
+      <div class="metric-sub">${fmtNum(totKilosRetal, 1)} kg</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">% Retal promedio</div>
+      <div class="metric-value" style="${pctRetalProm>5?'color:var(--danger)':'color:var(--accent-mid)'}">${fmtNum(pctRetalProm, 2)}%</div>
+      <div class="metric-sub">sobre libras tajadas</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Unidades obtenidas</div>
+      <div class="metric-value">${totUnidades.toLocaleString('es-CO')}</div>
+      <div class="metric-sub">en total</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Clientes activos</div>
+      <div class="metric-value">${clientesActivos}</div>
+      <div class="metric-sub">en el período</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Productos</div>
+      <div class="metric-value">${productosActivos}</div>
+      <div class="metric-sub">distintos</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Libras tajadas</div>
+      <div class="metric-value">${fmtNum(totLibrasTaj, 1)}</div>
+      <div class="metric-sub">materia procesada</div>
+    </div>
+  `;
+
+  // ─── Agrupar por producto ───
+  const porProd = {};
+  fil.forEach(p => {
+    const k = p.producto || '(SIN PRODUCTO)';
+    if (!porProd[k]) porProd[k] = {
+      producto: k, pedidos: 0, unidades: 0,
+      librasEnt: 0, kilosEnt: 0,
+      librasRetal: 0, kilosRetal: 0,
+      librasTaj: 0
+    };
+    porProd[k].pedidos++;
+    porProd[k].unidades += parseFloat(p.unidades)||0;
+    porProd[k].librasEnt += parseFloat(p.libras_ent)||0;
+    porProd[k].kilosEnt += parseFloat(p.kilos_ent)||0;
+    porProd[k].librasRetal += parseFloat(p.retal)||0;
+    porProd[k].librasTaj += parseFloat(p.libras_taj)||0;
+  });
+  Object.values(porProd).forEach(r => { r.kilosRetal = r.librasRetal * LB_TO_KG; });
+  const prodArr = Object.values(porProd).sort((a,b) => b.librasRetal - a.librasRetal);
+
+  // ─── Agrupar por cliente ───
+  const porCli = {};
+  fil.forEach(p => {
+    const k = p.cliente || '(SIN CLIENTE)';
+    if (!porCli[k]) porCli[k] = {
+      cliente: k, pedidos: 0, unidades: 0,
+      librasEnt: 0, kilosEnt: 0,
+      librasRetal: 0, kilosRetal: 0
+    };
+    porCli[k].pedidos++;
+    porCli[k].unidades += parseFloat(p.unidades)||0;
+    porCli[k].librasEnt += parseFloat(p.libras_ent)||0;
+    porCli[k].kilosEnt += parseFloat(p.kilos_ent)||0;
+    porCli[k].librasRetal += parseFloat(p.retal)||0;
+  });
+  Object.values(porCli).forEach(r => { r.kilosRetal = r.librasRetal * LB_TO_KG; });
+  const cliArr = Object.values(porCli).sort((a,b) => b.librasEnt - a.librasEnt);
+
+  // ─── Agrupar por mes ───
+  const porMes = {};
+  fil.forEach(p => {
+    const k = (p.fecha_entrega || '').slice(0,7) || '(SIN FECHA)';
+    if (!porMes[k]) porMes[k] = { mes: k, librasEnt: 0, librasRetal: 0 };
+    porMes[k].librasEnt += parseFloat(p.libras_ent)||0;
+    porMes[k].librasRetal += parseFloat(p.retal)||0;
+  });
+  const mesArr = Object.values(porMes).filter(m => m.mes !== '(SIN FECHA)').sort((a,b) => a.mes.localeCompare(b.mes));
+
+  // ─── Charts ───
+  const colorEnt = '#2d5a7b';
+  const colorRetal = '#9B2335';
+  const colorKilos = '#7DA4C6';
+
+  // 1. Retal por producto (libras + kilos)
+  destruirChart('ch-retal-prod');
+  dashCharts['ch-retal-prod'] = new Chart(document.getElementById('ch-retal-prod'), {
+    type: 'bar',
+    data: {
+      labels: prodArr.map(r => r.producto),
+      datasets: [
+        { label: 'Libras', data: prodArr.map(r => +r.librasRetal.toFixed(2)), backgroundColor: colorRetal },
+        { label: 'Kilos',  data: prodArr.map(r => +r.kilosRetal.toFixed(2)),  backgroundColor: colorKilos }
+      ]
+    },
+    options: chartBaseOptions({ horizontal: true })
+  });
+
+  // 2. Entregas por cliente
+  destruirChart('ch-entregas-cli');
+  dashCharts['ch-entregas-cli'] = new Chart(document.getElementById('ch-entregas-cli'), {
+    type: 'bar',
+    data: {
+      labels: cliArr.map(r => r.cliente),
+      datasets: [
+        { label: 'Libras entregadas', data: cliArr.map(r => +r.librasEnt.toFixed(2)), backgroundColor: colorEnt },
+        { label: 'Kilos entregados',  data: cliArr.map(r => +r.kilosEnt.toFixed(2)),  backgroundColor: colorKilos }
+      ]
+    },
+    options: chartBaseOptions({ horizontal: true })
+  });
+
+  // 3. Evolución mensual
+  destruirChart('ch-evolucion');
+  dashCharts['ch-evolucion'] = new Chart(document.getElementById('ch-evolucion'), {
+    type: 'line',
+    data: {
+      labels: mesArr.map(m => m.mes),
+      datasets: [
+        { label: 'Libras entregadas', data: mesArr.map(m => +m.librasEnt.toFixed(2)), borderColor: colorEnt, backgroundColor: colorEnt+'33', tension: .3, fill: true },
+        { label: 'Libras de retal',   data: mesArr.map(m => +m.librasRetal.toFixed(2)), borderColor: colorRetal, backgroundColor: colorRetal+'33', tension: .3, fill: true }
+      ]
+    },
+    options: chartBaseOptions({})
+  });
+
+  // 4. % Retal por producto
+  const prodPct = prodArr
+    .map(r => ({ producto: r.producto, pct: r.librasTaj > 0 ? (r.librasRetal / r.librasTaj) * 100 : 0 }))
+    .sort((a,b) => b.pct - a.pct);
+  destruirChart('ch-pct-prod');
+  dashCharts['ch-pct-prod'] = new Chart(document.getElementById('ch-pct-prod'), {
+    type: 'bar',
+    data: {
+      labels: prodPct.map(r => r.producto),
+      datasets: [{
+        label: '% Retal',
+        data: prodPct.map(r => +r.pct.toFixed(2)),
+        backgroundColor: prodPct.map(r => r.pct > 5 ? colorRetal : '#7D4F00')
+      }]
+    },
+    options: chartBaseOptions({ horizontal: true, suffix: '%' })
+  });
+
+  // ─── Tablas detalle ───
+  document.getElementById('tbl-prod').innerHTML = `
+    <thead>
+      <tr>
+        <th>Producto</th>
+        <th class="num">Pedidos</th>
+        <th class="num">Unidades</th>
+        <th class="num">Retal (lb)</th>
+        <th class="num">Retal (kg)</th>
+        <th class="num">% Retal</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${prodArr.map(r => `
+        <tr>
+          <td><strong>${r.producto}</strong></td>
+          <td class="num">${r.pedidos}</td>
+          <td class="num">${r.unidades.toLocaleString('es-CO')}</td>
+          <td class="num" style="${r.librasRetal>0?'color:var(--danger)':''}">${fmtNum(r.librasRetal,2)}</td>
+          <td class="num" style="${r.librasRetal>0?'color:var(--danger)':''}">${fmtNum(r.kilosRetal,2)}</td>
+          <td class="num">${r.librasTaj>0?fmtNum((r.librasRetal/r.librasTaj)*100,2)+'%':'—'}</td>
+        </tr>
+      `).join('')}
+    </tbody>`;
+
+  document.getElementById('tbl-cli').innerHTML = `
+    <thead>
+      <tr>
+        <th>Cliente</th>
+        <th class="num">Pedidos</th>
+        <th class="num">Libras ent.</th>
+        <th class="num">Kilos ent.</th>
+        <th class="num">Retal (lb)</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${cliArr.map(r => `
+        <tr>
+          <td><strong>${r.cliente}</strong></td>
+          <td class="num">${r.pedidos}</td>
+          <td class="num">${fmtNum(r.librasEnt,2)}</td>
+          <td class="num">${fmtNum(r.kilosEnt,2)}</td>
+          <td class="num" style="${r.librasRetal>0?'color:var(--danger)':''}">${fmtNum(r.librasRetal,2)}</td>
+        </tr>
+      `).join('')}
+    </tbody>`;
+}
+
+function chartBaseOptions(opts) {
+  const horizontal = !!opts.horizontal;
+  const suffix = opts.suffix || '';
+  return {
+    indexAxis: horizontal ? 'y' : 'x',
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { position: 'bottom', labels: { font: { family: 'DM Sans', size: 11 } } },
+      tooltip: {
+        callbacks: {
+          label: (ctx) => `${ctx.dataset.label}: ${Number(ctx.parsed[horizontal?'x':'y']).toLocaleString('es-CO',{maximumFractionDigits:2})}${suffix}`
+        }
+      }
+    },
+    scales: {
+      x: { ticks: { font: { family: 'DM Sans', size: 11 } }, grid: { color: 'rgba(0,0,0,.05)' } },
+      y: { ticks: { font: { family: 'DM Sans', size: 11 } }, grid: { color: 'rgba(0,0,0,.05)' } }
+    }
+  };
+}
+
+function destruirChart(id) {
+  if (dashCharts[id]) { try { dashCharts[id].destroy(); } catch(e){} delete dashCharts[id]; }
+}
+
+function limpiarFiltrosDash() {
+  dashFiltros = { mes: '', cliente: '' };
+  renderDashboard();
+}
+
+// ═══════════════════════════════════════════════════════════
+// BÚSQUEDA DE CÓDIGOS
 // ═══════════════════════════════════════════════════════════
 function renderCintas() {
   const buscar = (document.getElementById('c-buscar').value || '').toLowerCase().trim();
+  const orden = document.getElementById('c-orden')?.value || 'recientes';
   const tbody = document.getElementById('cintas-body');
+  const countEl = document.getElementById('c-count');
 
-  if (!buscar) {
-    tbody.innerHTML = `<tr><td colspan="9" class="empty-state"><div class="empty-state-text">Ingresa un código o texto para buscar</div></td></tr>`;
+  // Por defecto mostramos TODOS los códigos. Solo filtramos cuando hay término de búsqueda.
+  let lista = cintas.slice();
+
+  if (buscar) {
+    lista = lista.filter(c => {
+      const p = pedidos.find(x => x.id === c.id_pedido) || {};
+      const blob = [
+        c.codigo, c.cinta, c.dia_corte, c.prod_empleado,
+        p.cliente, p.producto, p.id, c.cantidad_cinta
+      ].join(' ').toLowerCase();
+      return blob.includes(buscar);
+    });
+  }
+
+  // Ordenar
+  lista.sort((a, b) => {
+    if (orden === 'codigo') return (a.codigo || '').localeCompare(b.codigo || '');
+    const da = a.dia_corte || '';
+    const db = b.dia_corte || '';
+    if (orden === 'antiguos') return da.localeCompare(db);
+    return db.localeCompare(da); // recientes (default)
+  });
+
+  if (countEl) {
+    countEl.textContent = buscar
+      ? `${lista.length} de ${cintas.length} códigos`
+      : `${cintas.length} códigos en total`;
+  }
+
+  if (!lista.length) {
+    tbody.innerHTML = buscar
+      ? `<tr><td colspan="9" class="empty-state"><div class="empty-state-text">Sin resultados para "${buscar}"</div></td></tr>`
+      : `<tr><td colspan="9" class="empty-state"><div class="empty-state-text">Aún no hay códigos registrados</div></td></tr>`;
     return;
   }
 
-  const fil = cintas.filter(c => c.codigo?.toLowerCase().includes(buscar) || c.dia_corte?.toLowerCase().includes(buscar));
-
-  if (!fil.length) {
-    tbody.innerHTML = `<tr><td colspan="9" class="empty-state"><div class="empty-state-text">Sin resultados para "${buscar}"</div></td></tr>`;
-    return;
-  }
-
-  tbody.innerHTML = fil.map(c => {
+  tbody.innerHTML = lista.map(c => {
     const p = pedidos.find(x => x.id === c.id_pedido);
     return `<tr>
-      <td class="mono" style="font-size:12px">${c.codigo}</td>
-      <td>${c.cinta}</td>
-      <td>${c.cantidad_cinta}</td>
-      <td>${p?.cliente||c.id_pedido}</td>
-      <td>${p?.producto||'—'}</td>
-      <td>${c.dia_corte}</td>
-      <td>${c.prod_empleado}</td>
+      <td class="mono" style="font-size:12px"><strong>${c.codigo || '—'}</strong></td>
+      <td>${c.cinta || '—'}</td>
+      <td>${c.cantidad_cinta ? `${c.cantidad_cinta} ${c.unidad_cinta||''}`.trim() : '—'}</td>
+      <td>${p?.cliente || c.id_pedido}</td>
+      <td>${p?.producto || '—'}</td>
+      <td style="color:var(--text2);font-size:12px">${fmtFecha(c.dia_corte)}</td>
+      <td style="color:var(--text2);font-size:12px">${c.prod_empleado || '—'}</td>
       <td style="color:var(--text2);font-size:12px">${fmtFecha(p?.fecha_entrega)}</td>
       <td>${p ? `<button class="btn btn-xs" onclick="abrirEditar('${p.id}')">Ver pedido</button>` : ''}</td>
     </tr>`;
@@ -1714,19 +2407,24 @@ document.addEventListener('input', function(e) {
 });
 
 window.onload = () => {
+  instalarListenersActividad();
   // Wait for GIS library
   const waitForGoogle = setInterval(() => {
     if (window.google && google.accounts && google.accounts.oauth2) {
       clearInterval(waitForGoogle);
       initTokenClient();
-      document.getElementById('loading').style.display = 'none';
-      document.getElementById('auth-screen').style.display = 'flex';
+      // Intentar restaurar sesión persistida; si no hay, mostrar login
+      const restaurada = intentarRestaurarSesion();
+      if (!restaurada) {
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('auth-screen').style.display = 'flex';
+      }
     }
   }, 100);
   // Timeout fallback
   setTimeout(() => {
     clearInterval(waitForGoogle);
-    if (!accessToken) {
+    if (!accessToken && document.getElementById('app-root').style.display === 'none') {
       document.getElementById('loading').style.display = 'none';
       document.getElementById('auth-screen').style.display = 'flex';
       if (!tokenClient) {
