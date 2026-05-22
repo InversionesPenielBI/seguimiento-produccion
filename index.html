@@ -680,7 +680,12 @@ table.data-table {
                 <option value="">Seleccionar...</option>
                 <option>BLOQUE</option><option>TAJADO</option>
                 <option>DEDOS</option><option>PORCIÓN</option>
+                <option>MONEDA</option>
               </select>
+            </div>
+            <div class="field">
+              <label>Cantidad solicitada</label>
+              <input id="f-cantidad" type="number" placeholder="# Unidades">
             </div>
             <div class="field">
               <label>Unidad de cantidad</label>
@@ -689,10 +694,6 @@ table.data-table {
                 <option value="Kilos">Kilos</option>
                 <option value="Bloques">Bloques</option>
               </select>
-            </div>
-            <div class="field">
-              <label>Cantidad solicitada</label>
-              <input id="f-cantidad" type="number" placeholder="# Unidades">
             </div>
             <div class="field">
               <label>Peso (g)</label>
@@ -883,6 +884,8 @@ table.data-table {
                 <th>Pres.</th>
                 <th>F. Entrega</th>
                 <th style="text-align:right">Cant. Sol.</th>
+                <th>Operación</th>
+                <th>Sellado</th>
                 <th style="text-align:right">Unidades</th>
                 <th style="text-align:right">Lb. Entregadas</th>
                 <th style="text-align:right">Kg. Entregados</th>
@@ -891,8 +894,6 @@ table.data-table {
                 <th style="text-align:right">% Retal</th>
                 <th style="text-align:right">Diferencia</th>
                 <th style="text-align:right">% Dif.</th>
-                <th>Operación</th>
-                <th>Sellado</th>
                 <th>Estado</th>
                 <th>Cintas</th>
                 <th></th>
@@ -1413,7 +1414,7 @@ function addCintaRow(data, containerId, counterRef) {
   const div = document.createElement('div');
   div.className = 'cinta-item';
   div.id = 'cinta-' + n;
-  div.style.gridTemplateColumns = '28px 110px 120px 80px 110px 65px 90px 1fr 32px';
+  div.style.gridTemplateColumns = '28px repeat(7, 1fr) 32px';
   div.innerHTML = `
     <div class="cinta-num">${n}</div>
     <div class="field">
@@ -1775,10 +1776,13 @@ function applyHistFilters() {
       const isLast = i === pCintas.length - 1;
       return `<tr class="row-cinta${isLast?' row-cinta-last':''}" data-pedido="${p.id}" style="display:none">
         <td style="color:var(--text3);font-size:11px">Día ${i+1}</td>
-        <td colspan="2" style="color:var(--text2)">${c.dia_corte}</td>
-        <td colspan="2" style="color:var(--text2)">${c.prod_empleado}</td>
-        <td colspan="5" class="mono" style="color:var(--text)">${c.codigo}</td>
-        <td colspan="5"></td>
+        <td style="color:var(--text2);font-size:12px">${fmtFecha(c.dia_corte)}</td>
+        <td colspan="2" style="color:var(--text2);font-size:12px">${c.prod_empleado||'—'}</td>
+        <td class="mono" style="color:var(--text)">${c.codigo||'—'}</td>
+        <td style="color:var(--text2);font-size:12px">${c.cinta||'—'}</td>
+        <td style="text-align:right;font-size:12px">${c.cantidad_cinta||'—'}</td>
+        <td style="font-size:12px;color:var(--text2)">${c.unidad_cinta||'—'}</td>
+        <td colspan="7"></td>
         <td></td><td></td><td></td>
       </tr>`;
     }).join('');
@@ -1790,6 +1794,8 @@ function applyHistFilters() {
         <td><span class="badge ${bcls}">${p.presentacion||'—'}</span></td>
         <td style="color:var(--text2);font-size:12px">${fmtFecha(p.fecha_entrega)}</td>
         <td style="text-align:right">${(parseFloat(p.cantidad)||0).toLocaleString('es-CO')}</td>
+        <td style="font-size:12px;color:var(--text2)">${p.operacion||'—'}</td>
+        <td style="font-size:12px;color:var(--text2)">${p.sellado||'—'}</td>
         <td style="text-align:right">${(parseFloat(p.unidades)||0).toLocaleString('es-CO')}</td>
         <td style="text-align:right">${fNum(lbEnt)}</td>
         <td style="text-align:right">${fNum(kgEnt)}</td>
@@ -1800,8 +1806,6 @@ function applyHistFilters() {
         <td style="text-align:right;${pctRetal>0?'color:var(--danger)':''}">${pctRetal ? fmtNum(pctRetal,2)+'%' : '—'}</td>
         <td style="text-align:right">${dif ? fmtNum(dif,2) : '—'}</td>
         <td style="text-align:right">${pctDif ? fmtNum(pctDif,2)+'%' : '—'}</td>
-        <td style="font-size:12px;color:var(--text2)">${p.operacion||'—'}</td>
-        <td style="font-size:12px;color:var(--text2)">${p.sellado||'—'}</td>
         <td>${estadoHtml}</td>
         <td>
           ${pCintas.length > 0
@@ -1932,7 +1936,7 @@ function addEditCinta(data) {
   div.className = 'cinta-item';
   div.id = 'ecinta-' + n;
   div.dataset.cintaId = data?.id_cinta || '';
-  div.style.gridTemplateColumns = '28px 110px 120px 80px 110px 65px 90px 1fr 32px';
+  div.style.gridTemplateColumns = '28px repeat(7, 1fr) 32px';
   div.innerHTML = `
     <div class="cinta-num">${n}</div>
     <div class="field">
