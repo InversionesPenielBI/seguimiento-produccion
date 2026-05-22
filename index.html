@@ -661,6 +661,7 @@ table.data-table {
               <select id="f-unidad-tipo" onchange="actualizarPlaceholderCantidad()">
                 <option value="Unidades">Unidades</option>
                 <option value="Kilos">Kilos</option>
+                <option value="Bloques">Bloques</option>
               </select>
             </div>
             <div class="field">
@@ -741,10 +742,6 @@ table.data-table {
               <label>Retal bocadillo (libras)</label>
               <input id="f-retal-bocadillo" type="number" oninput="calcularCampos()" step="0.01" placeholder="0.00">
             </div>
-            <div class="field">
-              <label>Tipo de queso</label>
-              <input id="f-tipo-queso" placeholder="Ej: Doble Crema">
-            </div>
           </div>
           <div style="display:flex;align-items:center;gap:8px;margin:16px 0 10px">
             <div style="flex:1;height:1px;background:var(--border)"></div>
@@ -779,11 +776,7 @@ table.data-table {
               <input id="f-pct-dif" readonly style="background:var(--surface2);color:var(--text2);font-weight:600;font-family:var(--font-mono,monospace);font-size:13px" placeholder="Calculado">
             </div>
           </div>
-          <div class="form-grid form-grid-4" style="margin-top:14px">
-            <div class="field">
-              <label>Lote bloque empleado</label>
-              <input id="f-lote" type="date">
-            </div>
+          <div class="form-grid form-grid-3" style="margin-top:14px">
             <div class="field">
               <label>F/Vto. 2</label>
               <input id="f-vto2" type="date">
@@ -797,6 +790,19 @@ table.data-table {
               <input id="f-obs" placeholder="Notas adicionales">
             </div>
           </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Producto empleado</span>
+          <span class="card-sub">Bloques de queso utilizados — pueden ser de distintos tipos, gramajes o lotes</span>
+        </div>
+        <div class="card-body">
+          <div class="cintas-list" id="bloques-container"></div>
+          <button class="add-cinta" onclick="addBloqueRow()" style="margin-top:10px">
+            <span style="font-size:16px;font-weight:300">+</span> Agregar bloque empleado
+          </button>
         </div>
       </div>
 
@@ -958,11 +964,15 @@ let userInfo = null;
 let tokenExpiresAt = 0;
 let pedidos = [];
 let cintas = [];
+let bloques = [];
 let cintaCount = 0;
+let bloqueCount = 0;
 let editingId = null;
 let editCintaCount = 0;
+let editBloqueCount = 0;
 let sheetIds = {};
 let deletedCintaIds = [];
+let deletedBloqueIds = [];
 
 // ═══════════════════════════════════════════════════════════
 // LOGO FALLBACK (si logo.png no existe, mostramos SVG inline)
@@ -1281,9 +1291,10 @@ async function sheetsFindRow(sheet, colIdx, value) {
 async function loadData() {
   setSyncStatus('Sincronizando...');
   try {
-    const [pData, cData] = await Promise.all([
+    const [pData, cData, bData] = await Promise.all([
       sheetsGet('PEDIDOS!A2:AJ5000'),
       sheetsGet('CINTAS!A2:J5000'),
+      sheetsGet('BLOQUES!A2:G5000'),
     ]);
 
     const pRows = pData.values || [];
@@ -1304,6 +1315,13 @@ async function loadData() {
       id_cinta: r[0], id_pedido: r[1], dia_corte: r[2],
       prod_empleado: r[3], codigo: r[4], cinta: r[5]||'',
       cantidad_cinta: r[6]||'', unidad_cinta: r[7]||'Unidades', obs_cinta: r[8]||'', fecha_reg: r[9]||'',
+    }));
+
+    const bRows = bData.values || [];
+    bloques = bRows.filter(r => r[0]).map(r => ({
+      id_bloque: r[0], id_pedido: r[1],
+      gramaje_bloque_emp: r[2]||'', tipo_queso: r[3]||'',
+      cant_bloques: r[4]||'', lote_bloque: r[5]||'', fecha_reg: r[6]||'',
     }));
 
     // Populate datalists
@@ -1460,8 +1478,8 @@ async function guardarPedido() {
       document.getElementById('f-pct-retal').value,
       document.getElementById('f-diferencia').value,
       document.getElementById('f-pct-dif').value,
-      document.getElementById('f-tipo-queso').value,
-      document.getElementById('f-lote').value,
+      '', // tipo_queso — ahora en hoja BLOQUES
+      '', // lote — ahora en hoja BLOQUES
       document.getElementById('f-vto2').value,
       document.getElementById('f-vto3').value,
       document.getElementById('f-obs').value,
@@ -1476,6 +1494,14 @@ async function guardarPedido() {
         id + '_C' + (i + 1), id, c.dia_corte, c.prod_empleado, c.codigo, c.cinta, c.cantidad_cinta, c.unidad_cinta, c.obs_cinta, now
       ]);
       await sheetsAppend('CINTAS!A:J', cRows);
+    }
+
+    const bloquesNuevos = getBloques();
+    if (bloquesNuevos.length > 0) {
+      const bRows = bloquesNuevos.map((b, i) => [
+        id + '_B' + (i + 1), id, b.gramaje_bloque_emp, b.tipo_queso, b.cant_bloques, b.lote_bloque, now
+      ]);
+      await sheetsAppend('BLOQUES!A:G', bRows);
     }
 
     toast('Pedido guardado correctamente', 'success');
@@ -1534,7 +1560,7 @@ function calcularCampos() {
 function limpiarForm() {
   ['f-producto','f-menu','f-peso','f-cantidad','f-fab',
    'f-vto','f-operador','f-gramaje','f-gram-bloque',
-   'f-bloques','f-unidades','f-retal','f-tipo-queso','f-lote',
+   'f-bloques','f-unidades','f-retal',
    'f-vto2','f-vto3','f-obs',
    'f-libras-ent','f-kilos-ent','f-libras-taj','f-pct-retal','f-diferencia','f-pct-dif'
   ].forEach(id => {
@@ -1552,7 +1578,9 @@ function limpiarForm() {
   document.getElementById('f-sellado').value = '';
   document.getElementById('f-unidad-tipo').value = 'Unidades';
   document.getElementById('cintas-container').innerHTML = '';
+  document.getElementById('bloques-container').innerHTML = '';
   cintaCount = 0;
+  bloqueCount = 0;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1715,14 +1743,23 @@ function abrirEditar(id) {
       <div class="field"><label>Bloques gastados</label><input id="e-bloques" type="number" value="${p.bloques||''}"></div>
       <div class="field"><label>Retal (lb)</label><input id="e-retal" type="number" step="0.01" value="${p.retal||''}"></div>
     </div>
-    <div class="form-grid form-grid-3 section-gap">
+    <div class="form-grid form-grid-2 section-gap">
       <div class="field"><label>Fecha fabricación</label><input id="e-fab" type="date" value="${p.fecha_fab||''}"></div>
       <div class="field"><label>L / F. Vto.</label><input id="e-vto" type="date" value="${p.fecha_vto||''}"></div>
-      <div class="field"><label>Lote bloque</label><input id="e-lote" type="date" value="${p.lote||''}"></div>
     </div>
     <div class="field section-gap"><label>Observaciones</label><input id="e-obs" value="${p.observaciones||''}"></div>
 
     <div class="divider"></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
+      <div style="font-size:12px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.05em">Producto empleado</div>
+      <span style="font-size:11px;color:var(--text3)">Bloques de queso utilizados en este pedido</span>
+    </div>
+    <div class="cintas-list" id="edit-bloques-container"></div>
+    <button class="add-cinta" onclick="addEditBloque()" style="margin-top:10px">
+      <span style="font-size:16px;font-weight:300">+</span> Agregar bloque empleado
+    </button>
+
+    <div class="divider" style="margin-top:16px"></div>
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
       <div style="font-size:12px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.05em">Cintas de producción</div>
       <span style="font-size:11px;color:var(--text3)">Agrega días conforme se trabajan</span>
@@ -1732,7 +1769,11 @@ function abrirEditar(id) {
       <span style="font-size:16px;font-weight:300">+</span> Agregar día de corte
     </button>`;
 
-  // Render existing cintas
+  // Render existing bloques y cintas
+  const pBloques = bloques.filter(b => b.id_pedido === id);
+  deletedBloqueIds = [];
+  editBloqueCount = 0;
+  pBloques.forEach(b => addEditBloque(b));
   pCintas.forEach(c => addEditCinta(c));
 
   document.getElementById('modal-editar').classList.add('open');
@@ -1742,14 +1783,14 @@ function abrirEditar(id) {
     const isClosed = p.estado === 'CERRADO';
     const modalBody = document.getElementById('modal-body');
     const saveBtn = document.querySelector('.modal-footer .btn-primary');
-    const addCintaBtn = modalBody.querySelector('.add-cinta');
+    const addCintaBtns = modalBody.querySelectorAll('.add-cinta');
     if (isClosed) {
       modalBody.querySelectorAll('input, select, textarea, button.btn-icon').forEach(el => {
         el.disabled = true;
         el.style.opacity = '0.5';
         el.style.cursor = 'not-allowed';
       });
-      if (addCintaBtn) { addCintaBtn.disabled = true; addCintaBtn.style.opacity='0.5'; addCintaBtn.style.cursor='not-allowed'; }
+      addCintaBtns.forEach(btn => { btn.disabled = true; btn.style.opacity='0.5'; btn.style.cursor='not-allowed'; });
       if (saveBtn) saveBtn.style.display = 'none';
       // Show notice
       const notice = document.createElement('div');
@@ -1847,7 +1888,7 @@ async function guardarEdicion() {
       p.libras_ent, p.kilos_ent, p.libras_taj,
       document.getElementById('e-retal').value,
       p.pct_retal, p.diferencia, p.pct_dif, p.tipo_queso,
-      document.getElementById('e-lote').value,
+      p.lote,
       p.vto2, p.vto3,
       document.getElementById('e-obs').value,
       p.estado, p.fecha_creacion, now,
@@ -1898,6 +1939,48 @@ async function guardarEdicion() {
         await eliminarFilasBatch(delRequests);
       }
       deletedCintaIds = [];
+    }
+
+    // Manejar bloques nuevos
+    const editBloqueItems = document.querySelectorAll('#edit-bloques-container .cinta-item');
+    const existingBloqueIds = bloques.filter(b => b.id_pedido === editingId).map(b => b.id_bloque);
+    const newBloques = [];
+    editBloqueItems.forEach((item) => {
+      const n = item.id.split('-')[1];
+      const bloqueId = item.dataset.bloqueId;
+      if (!bloqueId) {
+        newBloques.push([
+          editingId + '_B' + (existingBloqueIds.length + newBloques.length + 1),
+          editingId,
+          document.getElementById('eb-gramaje-' + n)?.value || '',
+          (document.getElementById('eb-tipo-' + n)?.value || '').toUpperCase(),
+          document.getElementById('eb-cant-' + n)?.value || '',
+          document.getElementById('eb-lote-' + n)?.value || '',
+          now,
+        ]);
+      }
+    });
+
+    if (newBloques.length > 0) {
+      await sheetsAppend('BLOQUES!A:G', newBloques);
+    }
+
+    // Eliminar bloques que el usuario quitó
+    if (deletedBloqueIds.length > 0) {
+      const blqAllData = await sheetsGet('BLOQUES!A:A');
+      const blqAllRows = blqAllData.values || [];
+      const blqRowsToDelete = [];
+      for (let i = 1; i < blqAllRows.length; i++) {
+        if (deletedBloqueIds.includes((blqAllRows[i][0] || '').trim())) blqRowsToDelete.push(i + 1);
+      }
+      if (blqRowsToDelete.length > 0) {
+        const blqSheetId = await obtenerSheetId('BLOQUES');
+        const delReqs = blqRowsToDelete.sort((a, b) => b - a).map(row => ({
+          deleteDimension: { range: { sheetId: blqSheetId, dimension: 'ROWS', startIndex: row - 1, endIndex: row } }
+        }));
+        await eliminarFilasBatch(delReqs);
+      }
+      deletedBloqueIds = [];
     }
 
     toast('Cambios guardados', 'success');
@@ -1963,13 +2046,20 @@ async function eliminarPedido(id) {
   const p = pedidos.find(x => x.id === id);
   if (!p) return;
   const nCintas = cintas.filter(c => c.id_pedido === id).length;
+  const nBloques = bloques.filter(b => b.id_pedido === id).length;
   const msg = '¿Eliminar el pedido de ' + p.cliente + ' — ' + p.producto + '?'
     + (nCintas > 0 ? '\nSe eliminarán también ' + nCintas + ' cinta(s) asociada(s).' : '')
+    + (nBloques > 0 ? '\nSe eliminarán también ' + nBloques + ' bloque(s) empleado(s).' : '')
     + '\n\nEsta acción no se puede deshacer.';
   if (!confirm(msg)) return;
 
   try {
-    const pedData = await sheetsGet('PEDIDOS!A:A');
+    const [pedData, cinData, blqData] = await Promise.all([
+      sheetsGet('PEDIDOS!A:A'),
+      sheetsGet('CINTAS!B:B'),
+      sheetsGet('BLOQUES!B:B'),
+    ]);
+
     const pedRows = pedData.values || [];
     let pedRow = -1;
     for (let i = 1; i < pedRows.length; i++) {
@@ -1977,17 +2067,26 @@ async function eliminarPedido(id) {
     }
     if (pedRow < 0) { toast('No se encontró el pedido', 'error'); return; }
 
-    const cinData = await sheetsGet('CINTAS!B:B');
     const cinRows = cinData.values || [];
     const cinRowNums = [];
     for (let i = 1; i < cinRows.length; i++) {
       if ((cinRows[i][0] || '').trim() === id) cinRowNums.push(i + 1);
     }
 
+    const blqRows = blqData.values || [];
+    const blqRowNums = [];
+    for (let i = 1; i < blqRows.length; i++) {
+      if ((blqRows[i][0] || '').trim() === id) blqRowNums.push(i + 1);
+    }
+
     const pedSheetId = await obtenerSheetId('PEDIDOS');
     const cinSheetId = await obtenerSheetId('CINTAS');
+    const blqSheetId = await obtenerSheetId('BLOQUES');
 
     const requests = [
+      ...blqRowNums.sort((a, b) => b - a).map(row => ({
+        deleteDimension: { range: { sheetId: blqSheetId, dimension: 'ROWS', startIndex: row - 1, endIndex: row } }
+      })),
       ...cinRowNums.sort((a, b) => b - a).map(row => ({
         deleteDimension: { range: { sheetId: cinSheetId, dimension: 'ROWS', startIndex: row - 1, endIndex: row } }
       })),
@@ -2006,6 +2105,88 @@ function quitarEditCinta(btn) {
   const item = btn.closest('.cinta-item');
   const cintaId = item.dataset.cintaId;
   if (cintaId) deletedCintaIds.push(cintaId);
+  item.remove();
+}
+
+// ═══════════════════════════════════════════════════════════
+// BLOQUE ROWS (Producto Empleado)
+// ═══════════════════════════════════════════════════════════
+function addBloqueRow(data, containerId) {
+  const container = document.getElementById(containerId || 'bloques-container');
+  const n = ++bloqueCount;
+  const div = document.createElement('div');
+  div.className = 'cinta-item';
+  div.id = 'bloque-' + n;
+  div.style.gridTemplateColumns = '28px 110px 1fr 100px 1fr 32px';
+  div.innerHTML = `
+    <div class="cinta-num">${n}</div>
+    <div class="field">
+      <label>Gramaje bloque (g)</label>
+      <input id="b-gramaje-${n}" type="number" placeholder="Ej: 3300" value="${data?.gramaje_bloque_emp||''}">
+    </div>
+    <div class="field">
+      <label>Tipo de queso</label>
+      <input id="b-tipo-${n}" placeholder="Ej: Doble Crema" value="${data?.tipo_queso||''}">
+    </div>
+    <div class="field">
+      <label>Cant. bloques</label>
+      <input id="b-cant-${n}" type="number" placeholder="0" value="${data?.cant_bloques||''}">
+    </div>
+    <div class="field">
+      <label>Lote bloque empleado</label>
+      <input id="b-lote-${n}" type="date" value="${data?.lote_bloque||''}">
+    </div>
+    <button class="btn btn-xs btn-danger" onclick="this.closest('.cinta-item').remove()" title="Quitar" style="align-self:flex-end;margin-bottom:1px;font-size:15px;line-height:1;padding:4px 8px">✕</button>`;
+  container.appendChild(div);
+}
+
+function getBloques() {
+  return Array.from(document.querySelectorAll('#bloques-container .cinta-item')).map(item => {
+    const n = item.id.split('-')[1];
+    return {
+      gramaje_bloque_emp: document.getElementById('b-gramaje-' + n)?.value?.trim() || '',
+      tipo_queso: (document.getElementById('b-tipo-' + n)?.value?.trim() || '').toUpperCase(),
+      cant_bloques: document.getElementById('b-cant-' + n)?.value?.trim() || '',
+      lote_bloque: document.getElementById('b-lote-' + n)?.value?.trim() || '',
+    };
+  }).filter(b => b.tipo_queso || b.lote_bloque || b.gramaje_bloque_emp);
+}
+
+function addEditBloque(data) {
+  editBloqueCount++;
+  const n = editBloqueCount;
+  const container = document.getElementById('edit-bloques-container');
+  const div = document.createElement('div');
+  div.className = 'cinta-item';
+  div.id = 'ebloque-' + n;
+  div.dataset.bloqueId = data?.id_bloque || '';
+  div.style.gridTemplateColumns = '28px 110px 1fr 100px 1fr 32px';
+  div.innerHTML = `
+    <div class="cinta-num">${n}</div>
+    <div class="field">
+      <label>Gramaje bloque (g)</label>
+      <input id="eb-gramaje-${n}" type="number" placeholder="Ej: 3300" value="${data?.gramaje_bloque_emp||''}">
+    </div>
+    <div class="field">
+      <label>Tipo de queso</label>
+      <input id="eb-tipo-${n}" placeholder="Ej: Doble Crema" value="${data?.tipo_queso||''}">
+    </div>
+    <div class="field">
+      <label>Cant. bloques</label>
+      <input id="eb-cant-${n}" type="number" placeholder="0" value="${data?.cant_bloques||''}">
+    </div>
+    <div class="field">
+      <label>Lote bloque empleado</label>
+      <input id="eb-lote-${n}" type="date" value="${data?.lote_bloque||''}">
+    </div>
+    <button class="btn btn-xs btn-danger" onclick="quitarEditBloque(this)" style="align-self:flex-end;margin-bottom:1px;font-size:15px;line-height:1;padding:4px 8px">✕</button>`;
+  container.appendChild(div);
+}
+
+function quitarEditBloque(btn) {
+  const item = btn.closest('.cinta-item');
+  const bloqueId = item.dataset.bloqueId;
+  if (bloqueId) deletedBloqueIds.push(bloqueId);
   item.remove();
 }
 
