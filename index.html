@@ -5,7 +5,6 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Seguimiento Producción — Inversiones Peniel</title>
 <link rel="icon" type="image/png" href="logo.png">
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='6' fill='%231b354a'/><text x='16' y='22' text-anchor='middle' font-family='Georgia,serif' font-weight='700' font-size='14' fill='%23ffffff' letter-spacing='1'>IP</text></svg>">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -1413,8 +1412,9 @@ function addCintaRow(data, containerId, counterRef) {
       <label>Observación</label>
       <input id="c-obs-${n}" placeholder="Notas..." value="${data?.obs_cinta||''}">
     </div>
-    <button class="btn btn-xs btn-danger" onclick="this.closest('.cinta-item').remove()" title="Quitar" style="align-self:flex-end;margin-bottom:1px;font-size:15px;line-height:1;padding:4px 8px">✕</button>`;
+    <button class="btn btn-xs btn-danger" onclick="quitarCintaRow(this)" title="Quitar" style="align-self:flex-end;margin-bottom:1px;font-size:15px;line-height:1;padding:4px 8px">✕</button>`;
   container.appendChild(div);
+  renumberContainer(containerId || 'cintas-container');
 }
 
 function getCintas() {
@@ -1840,6 +1840,7 @@ function addEditCinta(data) {
     </div>
     <button class="btn btn-xs btn-danger" onclick="quitarEditCinta(this)" style="align-self:flex-end;margin-bottom:1px;font-size:15px;line-height:1;padding:4px 8px">✕</button>`;
   container.appendChild(div);
+  renumberContainer('edit-cintas-container');
 }
 
 function closeModal() {
@@ -2101,11 +2102,30 @@ async function eliminarPedido(id) {
   }
 }
 
+// Renumera visualmente los items de un container
+function renumberContainer(containerId) {
+  document.querySelectorAll('#' + containerId + ' .cinta-item').forEach((item, idx) => {
+    const num = item.querySelector('.cinta-num');
+    if (num) num.textContent = idx + 1;
+  });
+}
+
+function quitarCintaRow(btn) {
+  btn.closest('.cinta-item').remove();
+  renumberContainer('cintas-container');
+}
+
+function quitarBloqueRow(btn) {
+  btn.closest('.cinta-item').remove();
+  renumberContainer('bloques-container');
+}
+
 function quitarEditCinta(btn) {
   const item = btn.closest('.cinta-item');
   const cintaId = item.dataset.cintaId;
   if (cintaId) deletedCintaIds.push(cintaId);
   item.remove();
+  renumberContainer('edit-cintas-container');
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -2126,7 +2146,10 @@ function addBloqueRow(data, containerId) {
     </div>
     <div class="field">
       <label>Tipo de queso</label>
-      <input id="b-tipo-${n}" placeholder="Ej: Doble Crema" value="${data?.tipo_queso||''}">
+      <select id="b-tipo-${n}">
+        <option value="">Seleccionar...</option>
+        ${['MOZARELLA','DOBLE CREMA','QUESO DOBLE CREMA (BOCADILLO)','QUESO CON BOCADILLO','CAMPESINO','PERA'].map(p=>`<option${(data?.tipo_queso||'')=== p?' selected':''}>${p}</option>`).join('')}
+      </select>
     </div>
     <div class="field">
       <label>Cant. bloques</label>
@@ -2136,8 +2159,9 @@ function addBloqueRow(data, containerId) {
       <label>Lote bloque empleado</label>
       <input id="b-lote-${n}" type="date" value="${data?.lote_bloque||''}">
     </div>
-    <button class="btn btn-xs btn-danger" onclick="this.closest('.cinta-item').remove()" title="Quitar" style="align-self:flex-end;margin-bottom:1px;font-size:15px;line-height:1;padding:4px 8px">✕</button>`;
+    <button class="btn btn-xs btn-danger" onclick="quitarBloqueRow(this)" title="Quitar" style="align-self:flex-end;margin-bottom:1px;font-size:15px;line-height:1;padding:4px 8px">✕</button>`;
   container.appendChild(div);
+  renumberContainer(containerId || 'bloques-container');
 }
 
 function getBloques() {
@@ -2169,7 +2193,10 @@ function addEditBloque(data) {
     </div>
     <div class="field">
       <label>Tipo de queso</label>
-      <input id="eb-tipo-${n}" placeholder="Ej: Doble Crema" value="${data?.tipo_queso||''}">
+      <select id="eb-tipo-${n}">
+        <option value="">Seleccionar...</option>
+        ${['MOZARELLA','DOBLE CREMA','QUESO DOBLE CREMA (BOCADILLO)','QUESO CON BOCADILLO','CAMPESINO','PERA'].map(p=>`<option${(data?.tipo_queso||'')=== p?' selected':''}>${p}</option>`).join('')}
+      </select>
     </div>
     <div class="field">
       <label>Cant. bloques</label>
@@ -2181,6 +2208,7 @@ function addEditBloque(data) {
     </div>
     <button class="btn btn-xs btn-danger" onclick="quitarEditBloque(this)" style="align-self:flex-end;margin-bottom:1px;font-size:15px;line-height:1;padding:4px 8px">✕</button>`;
   container.appendChild(div);
+  renumberContainer('edit-bloques-container');
 }
 
 function quitarEditBloque(btn) {
@@ -2188,6 +2216,7 @@ function quitarEditBloque(btn) {
   const bloqueId = item.dataset.bloqueId;
   if (bloqueId) deletedBloqueIds.push(bloqueId);
   item.remove();
+  renumberContainer('edit-bloques-container');
 }
 
 // ═══════════════════════════════════════════════════════════
