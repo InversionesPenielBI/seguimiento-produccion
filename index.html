@@ -501,6 +501,47 @@ table.data-table {
   color: var(--text); font-family: 'DM Sans', sans-serif; font-size: 13px;
 }
 
+/* ── Multi-Select Dropdown ── */
+.ms-wrap { position: relative; display: inline-flex; }
+.ms-btn {
+  display: flex; align-items: center; gap: 6px;
+  padding: 7px 12px; border: 1px solid var(--border2);
+  border-radius: var(--radius); background: var(--surface);
+  color: var(--text); font-size: 13px; font-family: 'DM Sans', sans-serif;
+  cursor: pointer; white-space: nowrap; user-select: none; line-height: 1.4;
+}
+.ms-btn:hover { border-color: var(--accent-mid); }
+.ms-btn.ms-active { border-color: var(--accent); background: var(--surface2); }
+.ms-count {
+  background: var(--accent); color: #fff;
+  border-radius: 10px; padding: 1px 7px; font-size: 11px; font-weight: 600; line-height: 1.5;
+}
+.ms-arrow { font-size: 10px; opacity: .5; }
+.ms-panel {
+  position: absolute; top: calc(100% + 4px); left: 0; z-index: 500;
+  background: var(--surface); border: 1px solid var(--border2);
+  border-radius: var(--radius); box-shadow: 0 6px 20px rgba(0,0,0,.22);
+  min-width: 210px; max-height: 270px; overflow-y: auto; padding: 4px 0;
+  display: none;
+}
+.ms-item {
+  display: flex; align-items: center; gap: 9px;
+  padding: 7px 13px; cursor: pointer; font-size: 13px;
+  font-family: 'DM Sans', sans-serif; white-space: nowrap;
+  color: var(--text); user-select: none;
+}
+.ms-item:hover { background: var(--surface2); }
+.ms-item input[type=checkbox] { accent-color: var(--accent); width: 14px; height: 14px; cursor: pointer; flex-shrink: 0; }
+.ms-separator { border: none; border-top: 1px solid var(--border); margin: 3px 0; }
+.date-range-wrap { display: flex; align-items: center; gap: 4px; }
+.date-range-wrap input[type=date] {
+  padding: 7px 9px; border: 1px solid var(--border2);
+  border-radius: var(--radius); background: var(--surface);
+  color: var(--text); font-family: 'DM Sans', sans-serif; font-size: 13px;
+}
+.date-range-wrap input[type=date]:focus { outline: none; border-color: var(--accent-mid); }
+.date-range-label { font-size: 12px; color: var(--text3); white-space: nowrap; }
+
 @media (max-width: 1100px) {
   .dash-metrics { grid-template-columns: repeat(2, 1fr); }
   .dash-grid { grid-template-columns: 1fr; }
@@ -830,20 +871,7 @@ table.data-table {
     <div class="view" id="view-historial">
       <div class="metrics-grid" id="metrics-grid"></div>
 
-      <div class="filter-bar">
-        <input id="h-buscar" placeholder="Buscar cliente, producto..." oninput="renderHistorial()">
-        <select id="h-cliente" onchange="renderHistorial()">
-          <option value="">Todos los clientes</option>
-        </select>
-        <select id="h-mes" onchange="renderHistorial()">
-          <option value="">Todos los meses</option>
-        </select>
-        <select id="h-estado" onchange="renderHistorial()">
-          <option value="">Todos los estados</option>
-          <option value="ABIERTO">Abiertos</option>
-          <option value="CERRADO">Cerrados</option>
-        </select>
-      </div>
+      <div id="hist-filter-bar" class="filter-bar"></div>
 
       <div class="card" style="padding:0;overflow:hidden">
         <div class="table-wrap">
@@ -1537,14 +1565,20 @@ function actualizarPlaceholderCantidad() {
 
 function calcularCampos() {
   const gramaje = parseFloat(document.getElementById('f-gramaje').value) || 0;
-  const gramBloque = parseFloat(document.getElementById('f-gram-bloque').value) || 0;
-  const bloques = parseFloat(document.getElementById('f-bloques').value) || 0;
   const unidades = parseFloat(document.getElementById('f-unidades').value) || 0;
   const retal = parseFloat(document.getElementById('f-retal').value) || 0;
 
+  // Sumar libras tajadas de TODAS las entradas de Producto Empleado
+  let librasTaj = 0;
+  document.querySelectorAll('#bloques-container .cinta-item').forEach(item => {
+    const n = item.id.split('-')[1];
+    const g = parseFloat(document.getElementById('b-gramaje-' + n)?.value) || 0;
+    const c = parseFloat(document.getElementById('b-cant-' + n)?.value) || 0;
+    if (g > 0 && c > 0) librasTaj += (g / 500) * c;
+  });
+
   const librasEnt = gramaje > 0 ? (unidades * gramaje) / 500 : 0;
   const kilosEnt = librasEnt / 2;
-  const librasTaj = gramBloque > 0 ? (gramBloque / 500) * bloques : 0;
   const pctRetal = librasTaj > 0 ? (retal / librasTaj) * 100 : 0;
   const diferencia = librasTaj - librasEnt - retal;
   const pctDif = librasTaj > 0 ? (diferencia / librasTaj) * 100 : 0;
@@ -1587,29 +1621,81 @@ function limpiarForm() {
 // HISTORIAL
 // ═══════════════════════════════════════════════════════════
 function renderHistorial() {
-  const buscar = (document.getElementById('h-buscar').value || '').toLowerCase();
-  const filtCliente = document.getElementById('h-cliente').value;
-  const filtMes = document.getElementById('h-mes').value;
-  const filtEstado = document.getElementById('h-estado').value;
-
-  // Update filter dropdowns
   const clientes = [...new Set(pedidos.map(p => p.cliente).filter(Boolean))].sort();
-  const selC = document.getElementById('h-cliente');
-  const curC = selC.value;
-  selC.innerHTML = '<option value="">Todos los clientes</option>' +
-    clientes.map(c => `<option${c === curC ? ' selected' : ''}>${c}</option>`).join('');
+  const prods    = [...new Set(pedidos.map(p => p.producto).filter(Boolean))].sort();
+  const pres     = [...new Set(pedidos.map(p => p.presentacion).filter(Boolean))].sort();
+  const estados  = ['ABIERTO', 'CERRADO'];
 
-  const meses = [...new Set(pedidos.map(p => p.fecha_entrega?.slice(0,7)).filter(Boolean))].sort().reverse();
-  const selM = document.getElementById('h-mes');
-  const curM = selM.value;
-  selM.innerHTML = '<option value="">Todos los meses</option>' +
-    meses.map(m => `<option value="${m}"${m === curM ? ' selected' : ''}>${m}</option>`).join('');
+  // ── Construir barra de filtros (solo la primera vez) ──
+  const filterBar = document.getElementById('hist-filter-bar');
+  if (!filterBar._built) {
+    filterBar._built = true;
+    filterBar.innerHTML = '';
 
+    // Buscar
+    const buscarInput = document.createElement('input');
+    buscarInput.id = 'h-buscar';
+    buscarInput.placeholder = 'Buscar cliente, producto…';
+    buscarInput.value = histFiltros.buscar;
+    buscarInput.style.minWidth = '190px';
+    buscarInput.addEventListener('input', () => { histFiltros.buscar = buscarInput.value; applyHistFilters(); });
+    filterBar.appendChild(buscarInput);
+
+    // Multi-selects
+    filterBar._msCliente = buildMultiSelect('Cliente', clientes, histFiltros.clientes, applyHistFilters);
+    filterBar._msProducto = buildMultiSelect('Producto', prods, histFiltros.productos, applyHistFilters);
+    filterBar._msPresentacion = buildMultiSelect('Presentación', pres, histFiltros.presentaciones, applyHistFilters);
+    filterBar._msEstado = buildMultiSelect('Estado', estados, histFiltros.estados, applyHistFilters);
+    filterBar.appendChild(filterBar._msCliente);
+    filterBar.appendChild(filterBar._msProducto);
+    filterBar.appendChild(filterBar._msPresentacion);
+    filterBar.appendChild(filterBar._msEstado);
+
+    // Rango de fecha de entrega
+    const dateWrap = document.createElement('div');
+    dateWrap.className = 'date-range-wrap';
+    dateWrap.innerHTML = `
+      <span class="date-range-label">Entrega</span>
+      <input type="date" id="h-fecha-desde" title="Desde" value="${histFiltros.fechaDesde}">
+      <span class="date-range-label">—</span>
+      <input type="date" id="h-fecha-hasta" title="Hasta" value="${histFiltros.fechaHasta}">`;
+    dateWrap.querySelector('#h-fecha-desde').addEventListener('change', e => { histFiltros.fechaDesde = e.target.value; applyHistFilters(); });
+    dateWrap.querySelector('#h-fecha-hasta').addEventListener('change', e => { histFiltros.fechaHasta = e.target.value; applyHistFilters(); });
+    filterBar.appendChild(dateWrap);
+
+    // Botón limpiar
+    const btnLimpiar = document.createElement('button');
+    btnLimpiar.className = 'btn btn-sm';
+    btnLimpiar.textContent = 'Limpiar';
+    btnLimpiar.addEventListener('click', () => {
+      histFiltros.clientes = []; histFiltros.productos = []; histFiltros.presentaciones = [];
+      histFiltros.estados = []; histFiltros.fechaDesde = ''; histFiltros.fechaHasta = ''; histFiltros.buscar = '';
+      document.getElementById('h-buscar').value = '';
+      document.getElementById('h-fecha-desde').value = '';
+      document.getElementById('h-fecha-hasta').value = '';
+      filterBar._built = false; // force rebuild with cleared state
+      renderHistorial();
+    });
+    filterBar.appendChild(btnLimpiar);
+  } else {
+    // Actualizar opciones de los multi-selects sin destruirlos
+    filterBar._msCliente?.updateOptions(clientes);
+    filterBar._msProducto?.updateOptions(prods);
+    filterBar._msPresentacion?.updateOptions(pres);
+  }
+
+  applyHistFilters();
+}
+
+function applyHistFilters() {
   const fil = pedidos.filter(p => {
-    if (filtCliente && p.cliente !== filtCliente) return false;
-    if (filtMes && !p.fecha_entrega?.startsWith(filtMes)) return false;
-    if (filtEstado && p.estado !== filtEstado) return false;
-    if (buscar && !`${p.cliente} ${p.producto} ${p.id}`.toLowerCase().includes(buscar)) return false;
+    if (histFiltros.clientes.length      && !histFiltros.clientes.includes(p.cliente))           return false;
+    if (histFiltros.productos.length     && !histFiltros.productos.includes(p.producto))          return false;
+    if (histFiltros.presentaciones.length && !histFiltros.presentaciones.includes(p.presentacion)) return false;
+    if (histFiltros.estados.length       && !histFiltros.estados.includes(p.estado))              return false;
+    if (histFiltros.fechaDesde && (p.fecha_entrega||'') < histFiltros.fechaDesde) return false;
+    if (histFiltros.fechaHasta && (p.fecha_entrega||'') > histFiltros.fechaHasta) return false;
+    if (histFiltros.buscar && !`${p.cliente} ${p.producto} ${p.id}`.toLowerCase().includes(histFiltros.buscar.toLowerCase())) return false;
     return true;
   }).sort((a,b) => (b.fecha_entrega||'').localeCompare(a.fecha_entrega||''));
 
@@ -1652,10 +1738,13 @@ function renderHistorial() {
   tbody.innerHTML = fil.map(p => {
     const pCintas = cintas.filter(c => c.id_pedido === p.id);
     const bcls = pBadge[p.presentacion] || 'badge-gray';
-    const esAbierto = p.estado !== 'CERRADO';
+    const esAbierto = p.estado === 'ABIERTO';
+    const esCerrado = p.estado === 'CERRADO';
     const estadoHtml = esAbierto
       ? `<span class="estado-badge estado-abierto"><span class="dot dot-abierto"></span>Abierto</span>`
-      : `<span class="estado-badge estado-cerrado"><span class="dot dot-cerrado"></span>Cerrado</span>`;
+      : esCerrado
+        ? `<span class="estado-badge estado-cerrado"><span class="dot dot-cerrado"></span>Cerrado</span>`
+        : `<span class="estado-badge" style="background:var(--surface2);color:var(--text3);font-size:10px">Sin estado</span>`;
     const retal = parseFloat(p.retal)||0;
 
     const cintasRows = pCintas.map((c,i) => {
@@ -2118,6 +2207,7 @@ function quitarCintaRow(btn) {
 function quitarBloqueRow(btn) {
   btn.closest('.cinta-item').remove();
   renumberContainer('bloques-container');
+  calcularCampos();
 }
 
 function quitarEditCinta(btn) {
@@ -2142,7 +2232,7 @@ function addBloqueRow(data, containerId) {
     <div class="cinta-num">${n}</div>
     <div class="field">
       <label>Gramaje bloque (g)</label>
-      <input id="b-gramaje-${n}" type="number" placeholder="Ej: 3300" value="${data?.gramaje_bloque_emp||''}">
+      <input id="b-gramaje-${n}" type="number" placeholder="Ej: 3300" oninput="calcularCampos()" value="${data?.gramaje_bloque_emp||''}">
     </div>
     <div class="field">
       <label>Tipo de queso</label>
@@ -2153,7 +2243,7 @@ function addBloqueRow(data, containerId) {
     </div>
     <div class="field">
       <label>Cant. bloques</label>
-      <input id="b-cant-${n}" type="number" placeholder="0" value="${data?.cant_bloques||''}">
+      <input id="b-cant-${n}" type="number" placeholder="0" oninput="calcularCampos()" value="${data?.cant_bloques||''}">
     </div>
     <div class="field">
       <label>Lote bloque empleado</label>
@@ -2220,24 +2310,187 @@ function quitarEditBloque(btn) {
 }
 
 // ═══════════════════════════════════════════════════════════
+// MULTI-SELECT COMPONENT
+// ═══════════════════════════════════════════════════════════
+let _msOpenPanel = null;
+document.addEventListener('click', () => {
+  if (_msOpenPanel) {
+    _msOpenPanel.style.display = 'none';
+    const btn = _msOpenPanel.previousElementSibling;
+    if (btn) btn.classList.remove('ms-active');
+    _msOpenPanel = null;
+  }
+});
+
+function buildMultiSelect(placeholder, options, selected, onChange) {
+  const wrap = document.createElement('div');
+  wrap.className = 'ms-wrap';
+  wrap.addEventListener('click', e => e.stopPropagation());
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'ms-btn';
+
+  const panel = document.createElement('div');
+  panel.className = 'ms-panel';
+
+  function refreshBtn() {
+    btn.innerHTML = selected.length
+      ? `${placeholder} <span class="ms-count">${selected.length}</span>`
+      : `${placeholder} <span class="ms-arrow">▾</span>`;
+  }
+
+  function buildOptions(opts) {
+    panel.innerHTML = '';
+
+    // "Todos" item
+    const allLabel = document.createElement('label');
+    allLabel.className = 'ms-item';
+    const allChk = document.createElement('input');
+    allChk.type = 'checkbox';
+    allChk.checked = selected.length === 0;
+    allLabel.appendChild(allChk);
+    allLabel.appendChild(document.createTextNode(' Todos'));
+    panel.appendChild(allLabel);
+
+    const sep = document.createElement('hr');
+    sep.className = 'ms-separator';
+    panel.appendChild(sep);
+
+    const itemEls = opts.map(opt => {
+      const lbl = document.createElement('label');
+      lbl.className = 'ms-item';
+      const chk = document.createElement('input');
+      chk.type = 'checkbox';
+      chk.value = opt;
+      chk.checked = selected.includes(opt);
+      chk.addEventListener('change', () => {
+        if (chk.checked) { if (!selected.includes(opt)) selected.push(opt); }
+        else { const i = selected.indexOf(opt); if (i > -1) selected.splice(i, 1); }
+        allChk.checked = selected.length === 0;
+        refreshBtn();
+        onChange();
+      });
+      lbl.appendChild(chk);
+      lbl.appendChild(document.createTextNode(' ' + opt));
+      panel.appendChild(lbl);
+      return { chk, opt };
+    });
+
+    allChk.addEventListener('change', () => {
+      selected.length = 0;
+      itemEls.forEach(({chk}) => chk.checked = false);
+      refreshBtn();
+      onChange();
+    });
+  }
+
+  buildOptions(options);
+
+  btn.addEventListener('click', () => {
+    const isOpen = panel.style.display === 'block';
+    if (_msOpenPanel && _msOpenPanel !== panel) {
+      _msOpenPanel.style.display = 'none';
+      const prevBtn = _msOpenPanel.previousElementSibling;
+      if (prevBtn) prevBtn.classList.remove('ms-active');
+    }
+    panel.style.display = isOpen ? 'none' : 'block';
+    btn.classList.toggle('ms-active', !isOpen);
+    _msOpenPanel = isOpen ? null : panel;
+  });
+
+  // Expose update method to refresh options without losing open state
+  wrap.updateOptions = (newOpts) => {
+    buildOptions(newOpts);
+    refreshBtn();
+  };
+
+  refreshBtn();
+  wrap.appendChild(btn);
+  wrap.appendChild(panel);
+  return wrap;
+}
+
+// ═══════════════════════════════════════════════════════════
 // RESUMEN
 // ═══════════════════════════════════════════════════════════
-let resumenFiltros = { anio: '', mes: '', dia: '', producto: '', presentacion: '' };
+let resumenFiltros = { clientes: [], productos: [], presentaciones: [], fechaDesde: '', fechaHasta: '' };
 
 function renderResumen() {
-  const anios = [...new Set(pedidos.map(p => p.fecha_entrega?.slice(0,4)).filter(Boolean))].sort().reverse();
-  const meses = [...new Set(pedidos.map(p => p.fecha_entrega?.slice(0,7)).filter(Boolean))].sort().reverse();
-  const prods = [...new Set(pedidos.map(p => p.producto).filter(Boolean))].sort();
-  const pres  = [...new Set(pedidos.map(p => p.presentacion).filter(Boolean))].sort();
+  const cont = document.getElementById('resumen-content');
 
+  // Asegurar estructura base (filtros + datos)
+  if (!document.getElementById('resumen-filter-bar')) {
+    cont.innerHTML = `<div id="resumen-filter-bar" class="filter-bar" style="margin-bottom:16px"></div><div id="resumen-data"></div>`;
+  }
+
+  const clientes = [...new Set(pedidos.map(p => p.cliente).filter(Boolean))].sort();
+  const prods    = [...new Set(pedidos.map(p => p.producto).filter(Boolean))].sort();
+  const pres     = [...new Set(pedidos.map(p => p.presentacion).filter(Boolean))].sort();
+
+  // ── Barra de filtros persistente ──
+  const fb = document.getElementById('resumen-filter-bar');
+  if (!fb._built) {
+    fb._built = true;
+    fb.innerHTML = '';
+
+    fb._msCliente      = buildMultiSelect('Cliente',       clientes, resumenFiltros.clientes,       applyResumenFilters);
+    fb._msProducto     = buildMultiSelect('Producto',      prods,    resumenFiltros.productos,      applyResumenFilters);
+    fb._msPresentacion = buildMultiSelect('Presentación',  pres,     resumenFiltros.presentaciones, applyResumenFilters);
+    fb.appendChild(fb._msCliente);
+    fb.appendChild(fb._msProducto);
+    fb.appendChild(fb._msPresentacion);
+
+    const dateWrap = document.createElement('div');
+    dateWrap.className = 'date-range-wrap';
+    dateWrap.innerHTML = `
+      <span class="date-range-label">Entrega</span>
+      <input type="date" id="r-fecha-desde" value="${resumenFiltros.fechaDesde}">
+      <span class="date-range-label">—</span>
+      <input type="date" id="r-fecha-hasta" value="${resumenFiltros.fechaHasta}">`;
+    dateWrap.querySelector('#r-fecha-desde').addEventListener('change', e => { resumenFiltros.fechaDesde = e.target.value; applyResumenFilters(); });
+    dateWrap.querySelector('#r-fecha-hasta').addEventListener('change', e => { resumenFiltros.fechaHasta = e.target.value; applyResumenFilters(); });
+    fb.appendChild(dateWrap);
+
+    const btnLimpiar = document.createElement('button');
+    btnLimpiar.className = 'btn btn-sm';
+    btnLimpiar.textContent = 'Limpiar';
+    btnLimpiar.addEventListener('click', () => {
+      resumenFiltros.clientes = []; resumenFiltros.productos = [];
+      resumenFiltros.presentaciones = []; resumenFiltros.fechaDesde = ''; resumenFiltros.fechaHasta = '';
+      document.getElementById('r-fecha-desde').value = '';
+      document.getElementById('r-fecha-hasta').value = '';
+      fb._built = false;
+      renderResumen();
+    });
+    fb.appendChild(btnLimpiar);
+
+    const infoSpan = document.createElement('span');
+    infoSpan.id = 'resumen-info';
+    infoSpan.className = 'text-muted';
+    infoSpan.style.cssText = 'font-size:12px;margin-left:auto';
+    fb.appendChild(infoSpan);
+  } else {
+    fb._msCliente?.updateOptions(clientes);
+    fb._msProducto?.updateOptions(prods);
+    fb._msPresentacion?.updateOptions(pres);
+  }
+
+  applyResumenFilters();
+}
+
+function applyResumenFilters() {
   const filtPedidos = pedidos.filter(p => {
-    if (resumenFiltros.anio && !p.fecha_entrega?.startsWith(resumenFiltros.anio)) return false;
-    if (resumenFiltros.mes  && !p.fecha_entrega?.startsWith(resumenFiltros.mes))  return false;
-    if (resumenFiltros.dia  && p.fecha_entrega !== resumenFiltros.dia)             return false;
-    if (resumenFiltros.producto     && p.producto     !== resumenFiltros.producto)     return false;
-    if (resumenFiltros.presentacion && p.presentacion !== resumenFiltros.presentacion) return false;
+    if (resumenFiltros.clientes.length      && !resumenFiltros.clientes.includes(p.cliente))           return false;
+    if (resumenFiltros.productos.length     && !resumenFiltros.productos.includes(p.producto))          return false;
+    if (resumenFiltros.presentaciones.length && !resumenFiltros.presentaciones.includes(p.presentacion)) return false;
+    if (resumenFiltros.fechaDesde && (p.fecha_entrega||'') < resumenFiltros.fechaDesde) return false;
+    if (resumenFiltros.fechaHasta && (p.fecha_entrega||'') > resumenFiltros.fechaHasta) return false;
     return true;
   });
+
+  const infoSpan = document.getElementById('resumen-info');
+  if (infoSpan) infoSpan.textContent = `${filtPedidos.length} pedido${filtPedidos.length!==1?'s':''}`;
 
   const mapa = {};
   filtPedidos.forEach(p => {
@@ -2251,84 +2504,62 @@ function renderResumen() {
   const rows = Object.values(mapa).sort((a, b) => b.unidades - a.unidades);
   const pBadge = { BLOQUE:'badge-blue', TAJADO:'badge-green', DEDOS:'badge-amber', 'PORCIÓN':'badge-red' };
 
-  document.getElementById('resumen-content').innerHTML = `
-    <div class="filter-bar" style="margin-bottom:16px">
-      <select id="r-anio" onchange="resumenFiltros.anio=this.value;renderResumen()">
-        <option value="">Todos los años</option>
-        ${anios.map(a => `<option value="${a}"${a===resumenFiltros.anio?' selected':''}>${a}</option>`).join('')}
-      </select>
-      <select id="r-mes" onchange="resumenFiltros.mes=this.value;renderResumen()">
-        <option value="">Todos los meses</option>
-        ${meses.map(m => `<option value="${m}"${m===resumenFiltros.mes?' selected':''}>${m}</option>`).join('')}
-      </select>
-      <input id="r-dia" type="date" value="${resumenFiltros.dia}"
-        onchange="resumenFiltros.dia=this.value;renderResumen()"
-        style="padding:7px 11px;border:1px solid var(--border2);border-radius:var(--radius);background:var(--surface);color:var(--text);font-family:'DM Sans',sans-serif;font-size:13px"
-        title="Filtrar por día específico">
-      <select id="r-producto" onchange="resumenFiltros.producto=this.value;renderResumen()">
-        <option value="">Todos los productos</option>
-        ${prods.map(p => `<option value="${p}"${p===resumenFiltros.producto?' selected':''}>${p}</option>`).join('')}
-      </select>
-      <select id="r-presentacion" onchange="resumenFiltros.presentacion=this.value;renderResumen()">
-        <option value="">Todas las presentaciones</option>
-        ${pres.map(p => `<option value="${p}"${p===resumenFiltros.presentacion?' selected':''}>${p}</option>`).join('')}
-      </select>
-      <button class="btn btn-sm" onclick="resumenFiltros={anio:'',mes:'',dia:'',producto:'',presentacion:''};renderResumen()">Limpiar</button>
-      <span class="text-muted" style="font-size:12px;margin-left:auto">${filtPedidos.length} pedido${filtPedidos.length!==1?'s':''}</span>
-    </div>
-    ${rows.length === 0
-      ? `<div class="empty-state"><div class="empty-state-text">No hay datos con estos filtros</div></div>`
-      : rows.map(r => `
-        <div class="card" style="margin-bottom:16px;padding:0;overflow:hidden">
-          <div class="card-header">
-            <div>
-              <span class="card-title">${r.cliente}</span>
-              <span class="card-sub" style="margin-left:10px">${r.listaPedidos.length} pedido${r.listaPedidos.length!==1?'s':''}</span>
-            </div>
-            <div style="display:flex;gap:20px;font-size:12px;color:var(--text2);align-items:center">
-              <span><strong style="color:var(--text)">${r.unidades.toLocaleString('es-CO')}</strong> unidades</span>
-              <span><strong style="color:${r.retal>0?'var(--danger)':'var(--text)'}">${r.retal.toFixed(1)}</strong> lb retal</span>
-              <span><strong style="color:var(--text)">${r.cintas}</strong> cinta${r.cintas!==1?'s':''}</span>
-            </div>
+  const dataDiv = document.getElementById('resumen-data');
+  if (!dataDiv) return;
+  dataDiv.innerHTML = rows.length === 0
+    ? `<div class="empty-state"><div class="empty-state-text">No hay datos con estos filtros</div></div>`
+    : rows.map(r => `
+      <div class="card" style="margin-bottom:16px;padding:0;overflow:hidden">
+        <div class="card-header">
+          <div>
+            <span class="card-title">${r.cliente}</span>
+            <span class="card-sub" style="margin-left:10px">${r.listaPedidos.length} pedido${r.listaPedidos.length!==1?'s':''}</span>
           </div>
-          <div class="table-wrap">
-            <table class="data-table" style="font-size:12px">
-              <thead><tr>
-                <th>Producto</th><th>Presentación</th><th>F. Entrega</th>
-                <th style="text-align:right">Cant. Sol.</th>
-                <th style="text-align:right">Unidades</th>
-                <th style="text-align:right">Retal (lb)</th>
-                <th>Estado</th><th></th>
-              </tr></thead>
-              <tbody>
-                ${r.listaPedidos.sort((a,b)=>(b.fecha_entrega||'').localeCompare(a.fecha_entrega||'')).map(p => {
-                  const esAbierto = p.estado !== 'CERRADO';
-                  const retal = parseFloat(p.retal)||0;
-                  const bcls = pBadge[p.presentacion] || 'badge-gray';
-                  return `<tr>
-                    <td><strong>${p.producto||'—'}</strong></td>
-                    <td>${p.presentacion?`<span class="badge ${bcls}">${p.presentacion}</span>`:'—'}</td>
-                    <td style="color:var(--text2)">${fmtFecha(p.fecha_entrega)}</td>
-                    <td style="text-align:right">${p.cantidad||'—'}</td>
-                    <td style="text-align:right">${(parseFloat(p.unidades)||0).toLocaleString('es-CO')}</td>
-                    <td style="text-align:right;${retal>0?'color:var(--danger);font-weight:600':''}">${retal>0?retal.toFixed(1):'—'}</td>
-                    <td>${esAbierto
-                        ?'<span class="estado-badge estado-abierto"><span class="dot dot-abierto"></span>Abierto</span>'
-                        :'<span class="estado-badge estado-cerrado"><span class="dot dot-cerrado"></span>Cerrado</span>'}</td>
-                    <td><button class="btn btn-xs" onclick="abrirEditar('${p.id}')">Ver</button></td>
-                  </tr>`;
-                }).join('')}
-              </tbody>
-            </table>
+          <div style="display:flex;gap:20px;font-size:12px;color:var(--text2);align-items:center">
+            <span><strong style="color:var(--text)">${r.unidades.toLocaleString('es-CO')}</strong> unidades</span>
+            <span><strong style="color:${r.retal>0?'var(--danger)':'var(--text)'}">${r.retal.toFixed(1)}</strong> lb retal</span>
+            <span><strong style="color:var(--text)">${r.cintas}</strong> cinta${r.cintas!==1?'s':''}</span>
           </div>
-        </div>`).join('')}`;
+        </div>
+        <div class="table-wrap">
+          <table class="data-table" style="font-size:12px">
+            <thead><tr>
+              <th>Producto</th><th>Presentación</th><th>F. Entrega</th>
+              <th style="text-align:right">Cant. Sol.</th>
+              <th style="text-align:right">Unidades</th>
+              <th style="text-align:right">Retal (lb)</th>
+              <th>Estado</th><th></th>
+            </tr></thead>
+            <tbody>
+              ${r.listaPedidos.sort((a,b)=>(b.fecha_entrega||'').localeCompare(a.fecha_entrega||'')).map(p => {
+                const esAb = p.estado === 'ABIERTO'; const esCe = p.estado === 'CERRADO';
+                const retal = parseFloat(p.retal)||0;
+                const bcls = pBadge[p.presentacion] || 'badge-gray';
+                return `<tr>
+                  <td><strong>${p.producto||'—'}</strong></td>
+                  <td>${p.presentacion?`<span class="badge ${bcls}">${p.presentacion}</span>`:'—'}</td>
+                  <td style="color:var(--text2)">${fmtFecha(p.fecha_entrega)}</td>
+                  <td style="text-align:right">${p.cantidad||'—'}</td>
+                  <td style="text-align:right">${(parseFloat(p.unidades)||0).toLocaleString('es-CO')}</td>
+                  <td style="text-align:right;${retal>0?'color:var(--danger);font-weight:600':''}">${retal>0?retal.toFixed(1):'—'}</td>
+                  <td>${esAb?'<span class="estado-badge estado-abierto"><span class="dot dot-abierto"></span>Abierto</span>'
+                      :esCe?'<span class="estado-badge estado-cerrado"><span class="dot dot-cerrado"></span>Cerrado</span>'
+                      :'<span class="estado-badge" style="background:var(--surface2);color:var(--text3);font-size:10px">Sin estado</span>'}</td>
+                  <td><button class="btn btn-xs" onclick="abrirEditar('${p.id}')">Ver</button></td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>`).join('');
 }
 
 // ═══════════════════════════════════════════════════════════
 // DASHBOARD
 // ═══════════════════════════════════════════════════════════
 const dashCharts = {};
-let dashFiltros = { anio: '', mes: '', dia: '', cliente: '', producto: '', presentacion: '' };
+let dashFiltros = { clientes: [], productos: [], presentaciones: [], fechaDesde: '', fechaHasta: '' };
+let histFiltros  = { clientes: [], productos: [], presentaciones: [], estados: [], fechaDesde: '', fechaHasta: '', buscar: '' };
 
 const LB_TO_KG = 0.5;
 
@@ -2347,16 +2578,7 @@ function renderDashboard() {
   if (!document.getElementById('dash-mounted')) {
     cont.innerHTML = `
       <div id="dash-mounted">
-        <div class="dash-filter-bar">
-          <select id="dash-anio"><option value="">Todos los años</option></select>
-          <select id="dash-mes"><option value="">Todos los meses</option></select>
-          <input id="dash-dia" type="date" title="Día específico" style="padding:7px 11px;border:1px solid var(--border2);border-radius:var(--radius);background:var(--surface);color:var(--text);font-family:'DM Sans',sans-serif;font-size:13px">
-          <select id="dash-cliente"><option value="">Todos los clientes</option></select>
-          <select id="dash-producto"><option value="">Todos los productos</option></select>
-          <select id="dash-presentacion"><option value="">Todas las presentaciones</option></select>
-          <button class="btn btn-sm" onclick="limpiarFiltrosDash()">Limpiar</button>
-          <span id="dash-info" class="text-muted" style="font-size:12px;margin-left:auto"></span>
-        </div>
+        <div class="dash-filter-bar" id="dash-filter-bar"></div>
         <div class="dash-metrics" id="dash-metrics"></div>
         <div class="dash-grid">
           <div class="dash-card">
@@ -2423,46 +2645,65 @@ function renderDashboard() {
         </div>
       </div>`;
 
-    document.getElementById('dash-anio').addEventListener('change', e => { dashFiltros.anio = e.target.value; renderDashboard(); });
-    document.getElementById('dash-mes').addEventListener('change', e => { dashFiltros.mes = e.target.value; renderDashboard(); });
-    document.getElementById('dash-dia').addEventListener('change', e => { dashFiltros.dia = e.target.value; renderDashboard(); });
-    document.getElementById('dash-cliente').addEventListener('change', e => { dashFiltros.cliente = e.target.value; renderDashboard(); });
-    document.getElementById('dash-producto').addEventListener('change', e => { dashFiltros.producto = e.target.value; renderDashboard(); });
-    document.getElementById('dash-presentacion').addEventListener('change', e => { dashFiltros.presentacion = e.target.value; renderDashboard(); });
   }
 
-  // Poblar selects
-  const anios = [...new Set(pedidos.map(p => p.fecha_entrega?.slice(0,4)).filter(Boolean))].sort().reverse();
-  const meses = [...new Set(pedidos.map(p => p.fecha_entrega?.slice(0,7)).filter(Boolean))].sort().reverse();
+  // ── Barra de filtros persistente ──
   const clientes = [...new Set(pedidos.map(p => p.cliente).filter(Boolean))].sort();
-  const prods = [...new Set(pedidos.map(p => p.producto).filter(Boolean))].sort();
-  const pres = [...new Set(pedidos.map(p => p.presentacion).filter(Boolean))].sort();
+  const prods    = [...new Set(pedidos.map(p => p.producto).filter(Boolean))].sort();
+  const pres     = [...new Set(pedidos.map(p => p.presentacion).filter(Boolean))].sort();
 
-  document.getElementById('dash-anio').innerHTML = '<option value="">Todos los años</option>' +
-    anios.map(a => `<option value="${a}"${a===dashFiltros.anio?' selected':''}>${a}</option>`).join('');
-  document.getElementById('dash-mes').innerHTML = '<option value="">Todos los meses</option>' +
-    meses.map(m => `<option value="${m}"${m===dashFiltros.mes?' selected':''}>${m}</option>`).join('');
-  document.getElementById('dash-dia').value = dashFiltros.dia;
-  document.getElementById('dash-cliente').innerHTML = '<option value="">Todos los clientes</option>' +
-    clientes.map(c => `<option value="${c}"${c===dashFiltros.cliente?' selected':''}>${c}</option>`).join('');
-  document.getElementById('dash-producto').innerHTML = '<option value="">Todos los productos</option>' +
-    prods.map(p => `<option value="${p}"${p===dashFiltros.producto?' selected':''}>${p}</option>`).join('');
-  document.getElementById('dash-presentacion').innerHTML = '<option value="">Todas las presentaciones</option>' +
-    pres.map(p => `<option value="${p}"${p===dashFiltros.presentacion?' selected':''}>${p}</option>`).join('');
+  const dfb = document.getElementById('dash-filter-bar');
+  if (!dfb._built) {
+    dfb._built = true;
+    dfb.innerHTML = '';
+
+    dfb._msCliente      = buildMultiSelect('Cliente',      clientes, dashFiltros.clientes,       applyDashFilters);
+    dfb._msProducto     = buildMultiSelect('Producto',     prods,    dashFiltros.productos,      applyDashFilters);
+    dfb._msPresentacion = buildMultiSelect('Presentación', pres,     dashFiltros.presentaciones, applyDashFilters);
+    dfb.appendChild(dfb._msCliente);
+    dfb.appendChild(dfb._msProducto);
+    dfb.appendChild(dfb._msPresentacion);
+
+    const dateWrap = document.createElement('div');
+    dateWrap.className = 'date-range-wrap';
+    dateWrap.innerHTML = `
+      <span class="date-range-label">Entrega</span>
+      <input type="date" id="dash-fecha-desde" value="${dashFiltros.fechaDesde}">
+      <span class="date-range-label">—</span>
+      <input type="date" id="dash-fecha-hasta" value="${dashFiltros.fechaHasta}">`;
+    dateWrap.querySelector('#dash-fecha-desde').addEventListener('change', e => { dashFiltros.fechaDesde = e.target.value; applyDashFilters(); });
+    dateWrap.querySelector('#dash-fecha-hasta').addEventListener('change', e => { dashFiltros.fechaHasta = e.target.value; applyDashFilters(); });
+    dfb.appendChild(dateWrap);
+
+    const btnLimpiar = document.createElement('button');
+    btnLimpiar.className = 'btn btn-sm';
+    btnLimpiar.textContent = 'Limpiar';
+    btnLimpiar.addEventListener('click', limpiarFiltrosDash);
+    dfb.appendChild(btnLimpiar);
+
+    const infoSpan = document.createElement('span');
+    infoSpan.id = 'dash-info';
+    infoSpan.className = 'text-muted';
+    infoSpan.style.cssText = 'font-size:12px;margin-left:auto';
+    dfb.appendChild(infoSpan);
+  } else {
+    dfb._msCliente?.updateOptions(clientes);
+    dfb._msProducto?.updateOptions(prods);
+    dfb._msPresentacion?.updateOptions(pres);
+  }
 
   // Filtrar pedidos
   const fil = pedidos.filter(p => {
-    if (dashFiltros.anio && !p.fecha_entrega?.startsWith(dashFiltros.anio)) return false;
-    if (dashFiltros.mes  && !p.fecha_entrega?.startsWith(dashFiltros.mes))  return false;
-    if (dashFiltros.dia  && p.fecha_entrega !== dashFiltros.dia)             return false;
-    if (dashFiltros.cliente      && p.cliente      !== dashFiltros.cliente)      return false;
-    if (dashFiltros.producto     && p.producto     !== dashFiltros.producto)     return false;
-    if (dashFiltros.presentacion && p.presentacion !== dashFiltros.presentacion) return false;
+    if (dashFiltros.clientes.length       && !dashFiltros.clientes.includes(p.cliente))           return false;
+    if (dashFiltros.productos.length      && !dashFiltros.productos.includes(p.producto))          return false;
+    if (dashFiltros.presentaciones.length && !dashFiltros.presentaciones.includes(p.presentacion)) return false;
+    if (dashFiltros.fechaDesde && (p.fecha_entrega||'') < dashFiltros.fechaDesde) return false;
+    if (dashFiltros.fechaHasta && (p.fecha_entrega||'') > dashFiltros.fechaHasta) return false;
     return true;
   });
 
-  document.getElementById('dash-info').textContent =
-    `${fil.length} pedido${fil.length===1?'':'s'} considerados`;
+  const dashInfoEl = document.getElementById('dash-info');
+  if (dashInfoEl) dashInfoEl.textContent = `${fil.length} pedido${fil.length===1?'':'s'} considerados`;
 
   // KPIs
   const totLibrasEnt = fil.reduce((a,p) => a + (parseFloat(p.libras_ent)||0), 0);
@@ -2721,7 +2962,21 @@ function destruirChart(id) {
 }
 
 function limpiarFiltrosDash() {
-  dashFiltros = { anio: '', mes: '', dia: '', cliente: '', producto: '', presentacion: '' };
+  dashFiltros.clientes = []; dashFiltros.productos = [];
+  dashFiltros.presentaciones = []; dashFiltros.fechaDesde = ''; dashFiltros.fechaHasta = '';
+  const dfb = document.getElementById('dash-filter-bar');
+  if (dfb) {
+    const desde = document.getElementById('dash-fecha-desde');
+    const hasta = document.getElementById('dash-fecha-hasta');
+    if (desde) desde.value = '';
+    if (hasta) hasta.value = '';
+    dfb._built = false; // force filter bar rebuild to reset checkboxes
+  }
+  renderDashboard();
+}
+
+function applyDashFilters() {
+  // Rebuild dashboard data without rebuilding the filter bar
   renderDashboard();
 }
 
