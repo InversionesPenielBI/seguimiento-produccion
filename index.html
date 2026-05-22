@@ -348,7 +348,7 @@ table.data-table {
 .modal {
   background: var(--surface);
   border-radius: var(--radius-lg);
-  width: 100%; max-width: 760px;
+  width: 100%; max-width: 1050px;
   max-height: 90vh; overflow-y: auto;
   box-shadow: var(--shadow-md);
 }
@@ -673,7 +673,7 @@ table.data-table {
               <input id="f-fecha" type="date">
             </div>
           </div>
-          <div class="form-grid form-grid-4 section-gap">
+          <div class="form-grid section-gap" style="grid-template-columns:repeat(6,1fr)">
             <div class="field">
               <label>Presentación</label>
               <select id="f-pres">
@@ -681,6 +681,18 @@ table.data-table {
                 <option>BLOQUE</option><option>TAJADO</option>
                 <option>DEDOS</option><option>PORCIÓN</option>
               </select>
+            </div>
+            <div class="field">
+              <label>Unidad de cantidad</label>
+              <select id="f-unidad-tipo" onchange="actualizarPlaceholderCantidad()">
+                <option value="Unidades">Unidades</option>
+                <option value="Kilos">Kilos</option>
+                <option value="Bloques">Bloques</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Cantidad solicitada</label>
+              <input id="f-cantidad" type="number" placeholder="# Unidades">
             </div>
             <div class="field">
               <label>Peso (g)</label>
@@ -695,25 +707,13 @@ table.data-table {
               <input id="f-operador" placeholder="Nombre">
             </div>
           </div>
-          <div class="form-grid form-grid-4">
-            <div class="field">
-              <label>Unidad de cantidad</label>
-              <select id="f-unidad-tipo" onchange="actualizarPlaceholderCantidad()">
-                <option value="Unidades">Unidades</option>
-                <option value="Kilos">Kilos</option>
-                <option value="Bloques">Bloques</option>
-              </select>
-            </div>
-            <div class="field">
-              <label>Cantidad solicitada</label>
-              <input id="f-cantidad" type="number" placeholder="# Unidades">
-            </div>
+          <div class="form-grid form-grid-3">
             <div class="field">
               <label>Fecha fabricación</label>
-              <input id="f-fab" type="date">
+              <input id="f-fab" type="date" oninput="autoVto()">
             </div>
             <div class="field">
-              <label>L / F. Vto.</label>
+              <label>L / F. Vto. <span style="color:var(--accent-mid);font-size:10px">AUTO</span></label>
               <input id="f-vto" type="date">
             </div>
             <div class="field">
@@ -884,7 +884,15 @@ table.data-table {
                 <th>F. Entrega</th>
                 <th style="text-align:right">Cant. Sol.</th>
                 <th style="text-align:right">Unidades</th>
+                <th style="text-align:right">Lb. Entregadas</th>
+                <th style="text-align:right">Kg. Entregados</th>
+                <th style="text-align:right">Lb. Tajadas</th>
                 <th style="text-align:right">Retal (lb)</th>
+                <th style="text-align:right">% Retal</th>
+                <th style="text-align:right">Diferencia</th>
+                <th style="text-align:right">% Dif.</th>
+                <th>Operación</th>
+                <th>Sellado</th>
                 <th>Estado</th>
                 <th>Cintas</th>
                 <th></th>
@@ -1405,7 +1413,7 @@ function addCintaRow(data, containerId, counterRef) {
   const div = document.createElement('div');
   div.className = 'cinta-item';
   div.id = 'cinta-' + n;
-  div.style.gridTemplateColumns = '28px 110px 1fr 90px 90px 65px 75px 130px 32px';
+  div.style.gridTemplateColumns = '28px 110px 120px 80px 110px 65px 90px 1fr 32px';
   div.innerHTML = `
     <div class="cinta-num">${n}</div>
     <div class="field">
@@ -1558,6 +1566,14 @@ function onProductoChange() {
 // ═══════════════════════════════════════════════════════════
 // CÁLCULOS AUTOMÁTICOS
 // ═══════════════════════════════════════════════════════════
+function autoVto() {
+  const fab = document.getElementById('f-fab').value;
+  if (!fab) return;
+  const d = new Date(fab + 'T12:00:00');
+  d.setDate(d.getDate() + 29);
+  document.getElementById('f-vto').value = d.toISOString().split('T')[0];
+}
+
 function actualizarPlaceholderCantidad() {
   const tipo = document.getElementById('f-unidad-tipo').value;
   document.getElementById('f-cantidad').placeholder = tipo === 'Kilos' ? '# Kilos' : '# Unidades';
@@ -1583,12 +1599,13 @@ function calcularCampos() {
   const diferencia = librasTaj - librasEnt - retal;
   const pctDif = librasTaj > 0 ? (diferencia / librasTaj) * 100 : 0;
 
-  document.getElementById('f-libras-ent').value = librasEnt > 0 ? librasEnt.toFixed(3) : '';
-  document.getElementById('f-kilos-ent').value = kilosEnt > 0 ? kilosEnt.toFixed(3) : '';
-  document.getElementById('f-libras-taj').value = librasTaj > 0 ? librasTaj.toFixed(3) : '';
-  document.getElementById('f-pct-retal').value = pctRetal !== 0 ? pctRetal.toFixed(2) + '%' : '';
-  document.getElementById('f-diferencia').value = diferencia !== 0 ? diferencia.toFixed(3) : '';
-  document.getElementById('f-pct-dif').value = pctDif !== 0 ? pctDif.toFixed(2) + '%' : '';
+  const fmt2 = v => v.toLocaleString('es-CO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  document.getElementById('f-libras-ent').value = librasEnt > 0 ? fmt2(librasEnt) : '';
+  document.getElementById('f-kilos-ent').value = kilosEnt > 0 ? fmt2(kilosEnt) : '';
+  document.getElementById('f-libras-taj').value = librasTaj > 0 ? fmt2(librasTaj) : '';
+  document.getElementById('f-pct-retal').value = pctRetal !== 0 ? fmt2(pctRetal) + '%' : '';
+  document.getElementById('f-diferencia').value = diferencia !== 0 ? fmt2(diferencia) : '';
+  document.getElementById('f-pct-dif').value = pctDif !== 0 ? fmt2(pctDif) + '%' : '';
 }
 
 function limpiarForm() {
@@ -1731,7 +1748,7 @@ function applyHistFilters() {
 
   const tbody = document.getElementById('hist-body');
   if (!fil.length) {
-    tbody.innerHTML = `<tr><td colspan="10" class="empty-state"><div class="empty-state-text">No hay registros con estos filtros</div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="18" class="empty-state"><div class="empty-state-text">No hay registros con estos filtros</div></td></tr>`;
     return;
   }
 
@@ -1745,7 +1762,14 @@ function applyHistFilters() {
       : esCerrado
         ? `<span class="estado-badge estado-cerrado"><span class="dot dot-cerrado"></span>Cerrado</span>`
         : `<span class="estado-badge" style="background:var(--surface2);color:var(--text3);font-size:10px">Sin estado</span>`;
-    const retal = parseFloat(p.retal)||0;
+    const retal      = parseFloat(p.retal)||0;
+    const lbEnt      = parseFloat(p.libras_ent)||0;
+    const kgEnt      = parseFloat(p.kilos_ent)||0;
+    const lbTaj      = parseFloat(p.libras_taj)||0;
+    const pctRetal   = p.pct_retal ? parseFloat(p.pct_retal) : 0;
+    const dif        = parseFloat(p.diferencia)||0;
+    const pctDif     = p.pct_dif ? parseFloat(p.pct_dif) : 0;
+    const fNum = (v,d=2) => v ? fmtNum(v,d) : '—';
 
     const cintasRows = pCintas.map((c,i) => {
       const isLast = i === pCintas.length - 1;
@@ -1753,9 +1777,9 @@ function applyHistFilters() {
         <td style="color:var(--text3);font-size:11px">Día ${i+1}</td>
         <td colspan="2" style="color:var(--text2)">${c.dia_corte}</td>
         <td colspan="2" style="color:var(--text2)">${c.prod_empleado}</td>
-        <td colspan="3" class="mono" style="color:var(--text)">${c.codigo}</td>
-        <td></td>
-        <td></td>
+        <td colspan="5" class="mono" style="color:var(--text)">${c.codigo}</td>
+        <td colspan="5"></td>
+        <td></td><td></td><td></td>
       </tr>`;
     }).join('');
 
@@ -1767,9 +1791,17 @@ function applyHistFilters() {
         <td style="color:var(--text2);font-size:12px">${fmtFecha(p.fecha_entrega)}</td>
         <td style="text-align:right">${(parseFloat(p.cantidad)||0).toLocaleString('es-CO')}</td>
         <td style="text-align:right">${(parseFloat(p.unidades)||0).toLocaleString('es-CO')}</td>
+        <td style="text-align:right">${fNum(lbEnt)}</td>
+        <td style="text-align:right">${fNum(kgEnt)}</td>
+        <td style="text-align:right">${fNum(lbTaj)}</td>
         <td style="text-align:right;${retal>0?'color:var(--danger);font-weight:600':'color:var(--text3)'}">
-          ${retal>0 ? retal.toFixed(1) : '—'}
+          ${retal>0 ? fmtNum(retal,2) : '—'}
         </td>
+        <td style="text-align:right;${pctRetal>0?'color:var(--danger)':''}">${pctRetal ? fmtNum(pctRetal,2)+'%' : '—'}</td>
+        <td style="text-align:right">${dif ? fmtNum(dif,2) : '—'}</td>
+        <td style="text-align:right">${pctDif ? fmtNum(pctDif,2)+'%' : '—'}</td>
+        <td style="font-size:12px;color:var(--text2)">${p.operacion||'—'}</td>
+        <td style="font-size:12px;color:var(--text2)">${p.sellado||'—'}</td>
         <td>${estadoHtml}</td>
         <td>
           ${pCintas.length > 0
@@ -1900,7 +1932,7 @@ function addEditCinta(data) {
   div.className = 'cinta-item';
   div.id = 'ecinta-' + n;
   div.dataset.cintaId = data?.id_cinta || '';
-  div.style.gridTemplateColumns = '28px 110px 1fr 90px 90px 65px 75px 130px 32px';
+  div.style.gridTemplateColumns = '28px 110px 120px 80px 110px 65px 90px 1fr 32px';
   div.innerHTML = `
     <div class="cinta-num">${n}</div>
     <div class="field">
@@ -2558,12 +2590,12 @@ function applyResumenFilters() {
 // DASHBOARD
 // ═══════════════════════════════════════════════════════════
 const dashCharts = {};
-let dashFiltros = { clientes: [], productos: [], presentaciones: [], fechaDesde: '', fechaHasta: '' };
+let dashFiltros = { clientes: [], productos: [], presentaciones: [], sellados: [], anio: '', mes: '', fechaDesde: '', fechaHasta: '' };
 let histFiltros  = { clientes: [], productos: [], presentaciones: [], estados: [], fechaDesde: '', fechaHasta: '', buscar: '' };
 
 const LB_TO_KG = 0.5;
 
-function fmtNum(n, dec = 1) {
+function fmtNum(n, dec = 2) {
   if (!isFinite(n)) return '0';
   return Number(n).toLocaleString('es-CO', { minimumFractionDigits: dec, maximumFractionDigits: dec });
 }
@@ -2636,8 +2668,18 @@ function renderDashboard() {
         <div class="dash-grid" style="grid-template-columns:1fr;">
           <div class="dash-card">
             <div class="dash-card-header">
+              <span class="dash-card-title">Producción mensual por producto</span>
+              <span class="dash-card-sub">unidades obtenidas · kilos entregados · % retal</span>
+            </div>
+            <div class="dash-card-body"><div class="chart-wrap" style="min-height:320px"><canvas id="ch-prod-mes"></canvas></div></div>
+          </div>
+        </div>
+
+        <div class="dash-grid" style="grid-template-columns:1fr;">
+          <div class="dash-card">
+            <div class="dash-card-header">
               <span class="dash-card-title">Retal por producto · desglose por lote</span>
-              <span class="dash-card-sub" id="retal-lote-sub">fecha de corte · lote del bloque · libras y kilos</span>
+              <span class="dash-card-sub" id="retal-lote-sub">fecha de entrega · lotes de bloques empleados · libras y kilos</span>
             </div>
             <div class="dash-card-body" style="overflow:auto;padding:0" id="retal-lote-body">
             </div>
@@ -2648,21 +2690,42 @@ function renderDashboard() {
   }
 
   // ── Barra de filtros persistente ──
-  const clientes = [...new Set(pedidos.map(p => p.cliente).filter(Boolean))].sort();
-  const prods    = [...new Set(pedidos.map(p => p.producto).filter(Boolean))].sort();
-  const pres     = [...new Set(pedidos.map(p => p.presentacion).filter(Boolean))].sort();
+  const clientes  = [...new Set(pedidos.map(p => p.cliente).filter(Boolean))].sort();
+  const prods     = [...new Set(pedidos.map(p => p.producto).filter(Boolean))].sort();
+  const pres      = [...new Set(pedidos.map(p => p.presentacion).filter(Boolean))].sort();
+  const sellados  = [...new Set(pedidos.map(p => p.sellado).filter(Boolean))].sort();
+  const anios     = [...new Set(pedidos.map(p => p.fecha_entrega?.slice(0,4)).filter(Boolean))].sort().reverse();
+  const meses     = [...new Set(pedidos.map(p => p.fecha_entrega?.slice(0,7)).filter(Boolean))].sort().reverse();
 
   const dfb = document.getElementById('dash-filter-bar');
   if (!dfb._built) {
     dfb._built = true;
     dfb.innerHTML = '';
 
+    // Año select
+    const anioSel = document.createElement('select');
+    anioSel.id = 'dash-anio';
+    anioSel.className = 'ms-btn';
+    anioSel.style.cssText = 'cursor:pointer;padding:7px 11px';
+    anioSel.addEventListener('change', e => { dashFiltros.anio = e.target.value; applyDashFilters(); });
+    dfb.appendChild(anioSel);
+
+    // Mes select
+    const mesSel = document.createElement('select');
+    mesSel.id = 'dash-mes';
+    mesSel.className = 'ms-btn';
+    mesSel.style.cssText = 'cursor:pointer;padding:7px 11px';
+    mesSel.addEventListener('change', e => { dashFiltros.mes = e.target.value; applyDashFilters(); });
+    dfb.appendChild(mesSel);
+
     dfb._msCliente      = buildMultiSelect('Cliente',      clientes, dashFiltros.clientes,       applyDashFilters);
     dfb._msProducto     = buildMultiSelect('Producto',     prods,    dashFiltros.productos,      applyDashFilters);
     dfb._msPresentacion = buildMultiSelect('Presentación', pres,     dashFiltros.presentaciones, applyDashFilters);
+    dfb._msSellado      = buildMultiSelect('Sellado',      sellados, dashFiltros.sellados,       applyDashFilters);
     dfb.appendChild(dfb._msCliente);
     dfb.appendChild(dfb._msProducto);
     dfb.appendChild(dfb._msPresentacion);
+    dfb.appendChild(dfb._msSellado);
 
     const dateWrap = document.createElement('div');
     dateWrap.className = 'date-range-wrap';
@@ -2690,13 +2753,29 @@ function renderDashboard() {
     dfb._msCliente?.updateOptions(clientes);
     dfb._msProducto?.updateOptions(prods);
     dfb._msPresentacion?.updateOptions(pres);
+    dfb._msSellado?.updateOptions(sellados);
+  }
+
+  // Poblar selects año/mes
+  const anioEl = document.getElementById('dash-anio');
+  const mesEl  = document.getElementById('dash-mes');
+  if (anioEl) {
+    anioEl.innerHTML = '<option value="">Todos los años</option>' +
+      anios.map(a => `<option value="${a}"${a===dashFiltros.anio?' selected':''}>${a}</option>`).join('');
+  }
+  if (mesEl) {
+    mesEl.innerHTML = '<option value="">Todos los meses</option>' +
+      meses.map(m => `<option value="${m}"${m===dashFiltros.mes?' selected':''}>${m}</option>`).join('');
   }
 
   // Filtrar pedidos
   const fil = pedidos.filter(p => {
+    if (dashFiltros.anio && !p.fecha_entrega?.startsWith(dashFiltros.anio)) return false;
+    if (dashFiltros.mes  && !p.fecha_entrega?.startsWith(dashFiltros.mes))  return false;
     if (dashFiltros.clientes.length       && !dashFiltros.clientes.includes(p.cliente))           return false;
     if (dashFiltros.productos.length      && !dashFiltros.productos.includes(p.producto))          return false;
     if (dashFiltros.presentaciones.length && !dashFiltros.presentaciones.includes(p.presentacion)) return false;
+    if (dashFiltros.sellados.length       && !dashFiltros.sellados.includes(p.sellado))            return false;
     if (dashFiltros.fechaDesde && (p.fecha_entrega||'') < dashFiltros.fechaDesde) return false;
     if (dashFiltros.fechaHasta && (p.fecha_entrega||'') > dashFiltros.fechaHasta) return false;
     return true;
@@ -2851,6 +2930,86 @@ function renderDashboard() {
     options: chartBaseOptions({ horizontal: true, suffix: '%' })
   });
 
+  // ── Gráfico Producción mensual por producto ──
+  destruirChart('ch-prod-mes');
+  {
+    // Agrupar por mes y producto
+    const porMesProd = {};
+    fil.forEach(p => {
+      if (!p.fecha_entrega) return;
+      const mes = p.fecha_entrega.slice(0, 7);
+      const prod = p.producto || '(SIN PROD)';
+      const k = mes + '||' + prod;
+      if (!porMesProd[k]) porMesProd[k] = { mes, prod, unidades: 0, kilos: 0, librasTaj: 0, librasRetal: 0 };
+      porMesProd[k].unidades   += parseFloat(p.unidades)||0;
+      porMesProd[k].kilos      += (parseFloat(p.kilos_ent)||0);
+      porMesProd[k].librasTaj  += parseFloat(p.libras_taj)||0;
+      porMesProd[k].librasRetal += parseFloat(p.retal)||0;
+    });
+
+    const mesLabels = [...new Set(Object.values(porMesProd).map(r => r.mes))].sort();
+    const prodLabels = [...new Set(Object.values(porMesProd).map(r => r.prod))].sort();
+    const palette = ['#2dd4bf','#a78bfa','#f59e0b','#ef4444','#60a5fa','#34d399'];
+
+    const dsUnidades = prodLabels.map((prod, i) => ({
+      label: prod + ' · Unidades',
+      data: mesLabels.map(m => { const r = porMesProd[m + '||' + prod]; return r ? +r.unidades.toFixed(0) : 0; }),
+      backgroundColor: palette[i % palette.length] + 'cc',
+      borderRadius: 3,
+      stack: 'unidades',
+      yAxisID: 'y',
+    }));
+    const dsKilos = prodLabels.map((prod, i) => ({
+      label: prod + ' · Kilos ent.',
+      data: mesLabels.map(m => { const r = porMesProd[m + '||' + prod]; return r ? +r.kilos.toFixed(2) : 0; }),
+      backgroundColor: palette[i % palette.length] + '66',
+      borderRadius: 3,
+      stack: 'kilos',
+      yAxisID: 'y',
+    }));
+    const dsRetal = prodLabels.map((prod, i) => ({
+      type: 'line',
+      label: prod + ' · % Retal',
+      data: mesLabels.map(m => {
+        const r = porMesProd[m + '||' + prod];
+        return (r && r.librasTaj > 0) ? +(r.librasRetal / r.librasTaj * 100).toFixed(2) : null;
+      }),
+      borderColor: palette[i % palette.length],
+      backgroundColor: palette[i % palette.length] + '33',
+      borderWidth: 2,
+      pointRadius: 4,
+      tension: 0.3,
+      yAxisID: 'y2',
+      stack: undefined,
+    }));
+
+    dashCharts['ch-prod-mes'] = new Chart(document.getElementById('ch-prod-mes'), {
+      type: 'bar',
+      data: { labels: mesLabels, datasets: [...dsUnidades, ...dsKilos, ...dsRetal] },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { position: 'bottom', labels: { font: { family: 'DM Sans', size: 11 }, boxWidth: 12 } },
+          tooltip: {
+            callbacks: {
+              label: ctx => {
+                const v = ctx.parsed.y;
+                if (ctx.dataset.yAxisID === 'y2') return `${ctx.dataset.label}: ${Number(v).toLocaleString('es-CO',{maximumFractionDigits:2})}%`;
+                return `${ctx.dataset.label}: ${Number(v).toLocaleString('es-CO',{maximumFractionDigits:0})}`;
+              }
+            }
+          }
+        },
+        scales: {
+          x: { ticks: { font: { family: 'DM Sans', size: 11 } }, grid: { color: 'rgba(0,0,0,.05)' } },
+          y:  { position: 'left',  ticks: { font: { family: 'DM Sans', size: 11 } }, grid: { color: 'rgba(0,0,0,.05)' }, title: { display: true, text: 'Unidades / Kilos', font: { size: 10 } } },
+          y2: { position: 'right', ticks: { font: { family: 'DM Sans', size: 11 }, callback: v => v + '%' }, grid: { drawOnChartArea: false }, title: { display: true, text: '% Retal', font: { size: 10 } } }
+        }
+      }
+    });
+  }
+
   document.getElementById('tbl-prod').innerHTML = `
     <thead><tr>
       <th>Producto</th><th class="num">Pedidos</th><th class="num">Unidades</th>
@@ -2878,59 +3037,53 @@ function renderDashboard() {
       <td class="num" style="${r.librasRetal>0?'color:var(--danger)':''}">${fmtNum(r.librasRetal,2)}</td>
     </tr>`).join('')}</tbody>`;
 
-  // ── Tabla retal por lote ──
-  // Agrupar pedidos por producto, dentro de cada producto listar fecha+lote+retal
+  // ── Tabla retal por lote (tabla única) ──
   const retalLoteBody = document.getElementById('retal-lote-body');
   if (retalLoteBody) {
-    // Obtener productos con retal > 0, ordenados por total de retal desc
-    const prdsConRetal = prodArr.filter(r => r.librasRetal > 0);
-    if (!prdsConRetal.length) {
+    const pedConRetal = fil.filter(p => (parseFloat(p.retal)||0) > 0)
+      .sort((a,b) => (a.producto||'').localeCompare(b.producto||'') || (a.fecha_entrega||'').localeCompare(b.fecha_entrega||''));
+
+    if (!pedConRetal.length) {
       retalLoteBody.innerHTML = '<div class="empty-state" style="padding:24px"><div class="empty-state-text">Sin datos de retal en el período seleccionado</div></div>';
     } else {
-      // Para cada producto sacar los pedidos con retal, ordenados por fecha
-      const cols = prdsConRetal.length;
-      const tableStyle = 'border-collapse:collapse;font-size:12px;min-width:220px;width:100%';
-      const thStyle = 'padding:8px 12px;text-align:left;font-size:10px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);white-space:nowrap';
-      const thNum = 'padding:8px 12px;text-align:right;font-size:10px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);white-space:nowrap';
-      const tdStyle = 'padding:7px 12px;border-bottom:1px solid var(--border);color:var(--text2)';
-      const tdNum = 'padding:7px 12px;border-bottom:1px solid var(--border);text-align:right;font-family:"DM Mono",monospace';
+      const thS = 'padding:8px 12px;text-align:left;font-size:10px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.07em;border-bottom:1px solid var(--border);white-space:nowrap';
+      const thN = thS + ';text-align:right';
+      const tdS = 'padding:7px 12px;border-bottom:1px solid var(--border);color:var(--text2);font-size:12px';
+      const tdN = 'padding:7px 12px;border-bottom:1px solid var(--border);text-align:right;font-family:"DM Mono",monospace;font-size:12px';
 
-      retalLoteBody.innerHTML = `<div style="display:grid;grid-template-columns:repeat(${Math.min(cols,3)},1fr);gap:0;overflow-x:auto">
-        ${prdsConRetal.map(prod => {
-          const pedsProd = fil
-            .filter(p => (p.producto||'') === prod.producto && (parseFloat(p.retal)||0) > 0)
-            .sort((a,b) => (a.fecha_entrega||'').localeCompare(b.fecha_entrega||''));
-          return `<div style="border-right:1px solid var(--border);min-width:220px">
-            <div style="padding:10px 14px;background:var(--surface2);border-bottom:2px solid var(--border);font-size:12px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.04em">${prod.producto}</div>
-            <table style="${tableStyle}">
-              <thead><tr>
-                <th style="${thStyle}">Fecha</th>
-                <th style="${thStyle}">Lote bloque</th>
-                <th style="${thNum}">Lbs retal</th>
-                <th style="${thNum}">Kgs retal</th>
-              </tr></thead>
-              <tbody>
-                ${pedsProd.map((p,i) => {
-                  const retal = parseFloat(p.retal)||0;
-                  const kgs = retal * 0.5;
-                  const bg = i%2===1 ? 'background:var(--bg)' : '';
-                  return `<tr style="${bg}">
-                    <td style="${tdStyle}">${fmtFecha(p.fecha_entrega)}</td>
-                    <td style="${tdStyle}">${p.lote ? fmtFecha(p.lote) : '—'}</td>
-                    <td style="${tdNum};color:var(--danger)">${fmtNum(retal,1)}</td>
-                    <td style="${tdNum};color:var(--danger)">${fmtNum(kgs,1)}</td>
-                  </tr>`;
-                }).join('')}
-                <tr style="background:var(--accent-light)">
-                  <td colspan="2" style="padding:7px 12px;font-weight:700;font-size:11px;color:var(--accent);border-top:2px solid var(--border)">TOTAL ${prod.producto.split(' ').pop()}</td>
-                  <td style="${tdNum};font-weight:700;color:var(--accent);border-top:2px solid var(--border)">${fmtNum(prod.librasRetal,1)}</td>
-                  <td style="${tdNum};font-weight:700;color:var(--accent);border-top:2px solid var(--border)">${fmtNum(prod.kilosRetal,1)}</td>
-                </tr>
-              </tbody>
-            </table>
-          </div>`;
-        }).join('')}
-      </div>`;
+      retalLoteBody.innerHTML = `<table style="border-collapse:collapse;font-size:12px;width:100%">
+        <thead><tr>
+          <th style="${thS}">Producto</th>
+          <th style="${thS}">Fecha entrega</th>
+          <th style="${thS}">Lote bloque empleado</th>
+          <th style="${thN}">Lbs retal</th>
+          <th style="${thN}">Kgs retal</th>
+        </tr></thead>
+        <tbody>
+          ${pedConRetal.map((p,i) => {
+            const retal = parseFloat(p.retal)||0;
+            const kgs = retal * 0.5;
+            const bg = i%2===1 ? 'background:var(--bg)' : '';
+            // Get bloques for this pedido (use newest lote_bloque as representative)
+            const pedBloques = bloques.filter(b => b.id_pedido === p.id);
+            const lotesStr = pedBloques.length
+              ? pedBloques.map(b => b.lote_bloque ? fmtFecha(b.lote_bloque) : '—').filter((v,i,a)=>a.indexOf(v)===i).join(', ')
+              : (p.lote ? fmtFecha(p.lote) : '—');
+            return `<tr style="${bg}">
+              <td style="${tdS}"><strong>${p.producto||'—'}</strong></td>
+              <td style="${tdS}">${fmtFecha(p.fecha_entrega)}</td>
+              <td style="${tdS}">${lotesStr}</td>
+              <td style="${tdN};color:var(--danger);font-weight:600">${fmtNum(retal,2)}</td>
+              <td style="${tdN};color:var(--danger);font-weight:600">${fmtNum(kgs,2)}</td>
+            </tr>`;
+          }).join('')}
+          <tr style="background:var(--accent-light)">
+            <td colspan="3" style="padding:7px 12px;font-weight:700;font-size:11px;color:var(--accent);border-top:2px solid var(--border)">TOTAL</td>
+            <td style="${tdN};font-weight:700;color:var(--accent);border-top:2px solid var(--border)">${fmtNum(pedConRetal.reduce((a,p)=>a+(parseFloat(p.retal)||0),0),2)}</td>
+            <td style="${tdN};font-weight:700;color:var(--accent);border-top:2px solid var(--border)">${fmtNum(pedConRetal.reduce((a,p)=>a+(parseFloat(p.retal)||0)*0.5,0),2)}</td>
+          </tr>
+        </tbody>
+      </table>`;
     }
   }
 }
@@ -2962,8 +3115,9 @@ function destruirChart(id) {
 }
 
 function limpiarFiltrosDash() {
-  dashFiltros.clientes = []; dashFiltros.productos = [];
-  dashFiltros.presentaciones = []; dashFiltros.fechaDesde = ''; dashFiltros.fechaHasta = '';
+  dashFiltros.clientes = []; dashFiltros.productos = []; dashFiltros.presentaciones = [];
+  dashFiltros.sellados = []; dashFiltros.anio = ''; dashFiltros.mes = '';
+  dashFiltros.fechaDesde = ''; dashFiltros.fechaHasta = '';
   const dfb = document.getElementById('dash-filter-bar');
   if (dfb) {
     const desde = document.getElementById('dash-fecha-desde');
