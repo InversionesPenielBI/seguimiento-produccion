@@ -107,7 +107,8 @@ body {
   display: flex; align-items: center; justify-content: center;
   font-size: 11px; font-weight: 600; color: #fff; flex-shrink: 0;
 }
-.user-name { font-size: 12px; color: rgba(255,255,255,.7); }
+.user-name { font-size: 12px; color: rgba(255,255,255,.7); line-height: 1.3; }
+.user-role { font-size: 10px; color: rgba(255,255,255,.4); letter-spacing: .04em; line-height: 1.3; }
 
 /* ── Main ── */
 .main { flex: 1; display: flex; flex-direction: column; overflow: hidden; }
@@ -614,7 +615,10 @@ table.data-table {
     <div class="sidebar-bottom">
       <div class="user-chip">
         <div class="user-avatar" id="user-avatar">?</div>
-        <div class="user-name" id="user-name">...</div>
+        <div>
+          <div class="user-name" id="user-name">...</div>
+          <div class="user-role" id="user-role"></div>
+        </div>
       </div>
     </div>
   </div>
@@ -1011,6 +1015,30 @@ let deletedCintaIds = [];
 let deletedBloqueIds = [];
 
 // ═══════════════════════════════════════════════════════════
+// ROLES Y ACCESO
+// ═══════════════════════════════════════════════════════════
+// Para dar acceso: agregar email → 'ADMIN' o 'USUARIO'
+// ADMIN : acceso completo (crear, editar, cerrar, reabrir y eliminar pedidos)
+// USUARIO: puede crear pedidos y verlos; NO puede editar/eliminar pedidos
+//          cerrados ni reabrirlos.
+const USUARIOS_AUTORIZADOS = {
+  'analista.datos@inversionespeniel.com': 'ADMIN',
+  'hsuarez@inversionespeniel.com':        'ADMIN',
+  // Agregar más usuarios abajo (copiar la línea y cambiar email y rol):
+  // 'correo@dominio.com': 'ADMIN',
+  // 'correo@dominio.com': 'USUARIO',
+};
+
+let currentUserRole = null;
+function isAdmin()   { return currentUserRole === 'ADMIN'; }
+function isUsuario() { return currentUserRole === 'USUARIO'; }
+
+function verificarAcceso(email) {
+  if (!email) return null;
+  return USUARIOS_AUTORIZADOS[email] || USUARIOS_AUTORIZADOS[email.toLowerCase()] || null;
+}
+
+// ═══════════════════════════════════════════════════════════
 // LOGO FALLBACK (si logo.png no existe, mostramos SVG inline)
 // ═══════════════════════════════════════════════════════════
 function mostrarLogoFallback() {
@@ -1071,6 +1099,14 @@ function initTokenClient() {
 
       // Si ya tenemos userInfo de una sesión persistida, no la pedimos otra vez
       if (userInfo) {
+        // Re-verificar acceso (por si el rol cambió)
+        if (!currentUserRole) {
+          currentUserRole = verificarAcceso(userInfo.email);
+        }
+        if (!currentUserRole) {
+          forzarLogout('No tienes acceso a esta aplicación. Contacta al administrador.');
+          return;
+        }
         actualizarUIUsuario(userInfo);
         guardarSesion();
         showApp();
@@ -1080,14 +1116,21 @@ function initTokenClient() {
       fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
         headers: { Authorization: 'Bearer ' + accessToken }
       }).then(r => r.json()).then(info => {
+        const role = verificarAcceso(info.email);
+        if (!role) {
+          forzarLogout('No tienes acceso a esta aplicación. Contacta al administrador.');
+          return;
+        }
+        currentUserRole = role;
         userInfo = info;
         actualizarUIUsuario(info);
         guardarSesion();
       }).catch(() => {
-        userInfo = { name: 'Usuario' };
-        actualizarUIUsuario(userInfo);
-        guardarSesion();
-      }).finally(() => showApp());
+        forzarLogout('No se pudo verificar tu cuenta. Inténtalo nuevamente.');
+      }).finally(() => {
+        // showApp se llama dentro de cada rama al verificar acceso
+        if (userInfo && currentUserRole) showApp();
+      });
     },
   });
 }
@@ -1096,6 +1139,12 @@ function actualizarUIUsuario(info) {
   const name = info.name || info.email || 'Usuario';
   document.getElementById('user-name').textContent = name.split(' ')[0];
   document.getElementById('user-avatar').textContent = (name[0] || 'U').toUpperCase();
+  const roleEl = document.getElementById('user-role');
+  if (roleEl) {
+    if (currentUserRole === 'ADMIN') roleEl.textContent = 'Administrador';
+    else if (currentUserRole === 'USUARIO') roleEl.textContent = 'Usuario';
+    else roleEl.textContent = '';
+  }
 }
 
 function guardarSesion() {
@@ -1104,6 +1153,7 @@ function guardarSesion() {
       accessToken: accessToken,
       tokenExpiresAt: tokenExpiresAt,
       userInfo: userInfo,
+      currentUserRole: currentUserRole,
       lastActivity: Date.now(),
     };
     localStorage.setItem(SESSION_STORAGE_KEY, JSON.stringify(payload));
@@ -1123,6 +1173,7 @@ function limpiarSesion() {
   accessToken = null;
   userInfo = null;
   tokenExpiresAt = 0;
+  currentUserRole = null;
 }
 
 function intentarRestaurarSesion() {
@@ -1140,6 +1191,17 @@ function intentarRestaurarSesion() {
   userInfo = s.userInfo || null;
   tokenExpiresAt = s.tokenExpiresAt || 0;
   accessToken = s.accessToken || null;
+
+  // Restaurar rol (o derivarlo del email si la sesión es anterior al sistema de roles)
+  currentUserRole = s.currentUserRole || null;
+  if (!currentUserRole && userInfo) {
+    currentUserRole = verificarAcceso(userInfo.email);
+  }
+  // Si el email no está autorizado, borrar sesión
+  if (!currentUserRole) {
+    limpiarSesion();
+    return false;
+  }
 
   // Si el token de Google sigue vigente: úsalo
   if (accessToken && Date.now() < tokenExpiresAt) {
@@ -1845,6 +1907,12 @@ function abrirEditar(id) {
   document.getElementById('modal-titulo').textContent = `${p.cliente} — ${p.producto}` + (!esAbierto ? '  (CERRADO)' : '');
   document.getElementById('btn-estado-label').textContent = esAbierto ? 'Cerrar pedido' : 'Reabrir pedido';
 
+  // Usuarios no pueden reabrir pedidos cerrados — ocultar botón si aplica
+  const btnEstadoModal = document.querySelector('.modal-footer .btn-danger');
+  if (btnEstadoModal) {
+    btnEstadoModal.style.display = (!esAbierto && !isAdmin()) ? 'none' : '';
+  }
+
   document.getElementById('modal-body').innerHTML = `
     <div class="form-grid form-grid-3 section-gap">
       <div class="field"><label>Cliente</label><input id="e-cliente" value="${p.cliente||''}"></div>
@@ -2122,6 +2190,12 @@ async function cambiarEstado() {
   const p = pedidos.find(x => x.id === editingId);
   if (!p) return;
   const nuevoEstado = p.estado === 'CERRADO' ? 'ABIERTO' : 'CERRADO';
+
+  // Solo ADMIN puede reabrir pedidos cerrados
+  if (nuevoEstado === 'ABIERTO' && !isAdmin()) {
+    toast('Solo los administradores pueden reabrir pedidos cerrados.', 'error');
+    return;
+  }
   try {
     const data = await sheetsGet('PEDIDOS!A:A');
     const rows = data.values || [];
@@ -2171,6 +2245,11 @@ async function eliminarFilasBatch(requests) {
 async function eliminarPedido(id) {
   const p = pedidos.find(x => x.id === id);
   if (!p) return;
+  // Solo ADMIN puede eliminar pedidos cerrados
+  if (p.estado === 'CERRADO' && !isAdmin()) {
+    toast('Solo los administradores pueden eliminar pedidos cerrados.', 'error');
+    return;
+  }
   const nCintas = cintas.filter(c => c.id_pedido === id).length;
   const nBloques = bloques.filter(b => b.id_pedido === id).length;
   const msg = '¿Eliminar el pedido de ' + p.cliente + ' — ' + p.producto + '?'
