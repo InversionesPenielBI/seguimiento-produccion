@@ -990,13 +990,13 @@ table.data-table {
 // ═══════════════════════════════════════════════════════════
 const SHEET_ID = '1iEtI6zBBNMMDMpt4f2l73UKe4tUmKRgBBbp8N7UHvhQ';
 const CLIENT_ID = '472930002147-of08gfnkeuu57gsbpgl48g5b20bvk3sp.apps.googleusercontent.com';
-const SCOPES = 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/userinfo.profile';
+const SCOPES = 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email';
 const API_KEY = ''; // no se usa con OAuth
 
 // Sesión: tiempo máximo de inactividad antes de cerrar sesión automáticamente (en ms)
 // 8 horas — el usuario puede refrescar la página dentro de esta ventana sin perder la sesión
 const INACTIVITY_TIMEOUT_MS = 8 * 60 * 60 * 1000;
-const SESSION_STORAGE_KEY = 'peniel_session_v1';
+const SESSION_STORAGE_KEY = 'peniel_session_v2'; // v2: incluye scope de email para roles
 let inactivityTimerId = null;
 
 let accessToken = null;
