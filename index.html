@@ -971,7 +971,7 @@ table.data-table {
     <!-- ═══ VIEW: DASHBOARD ═══ -->
     <div class="view" id="view-dashboard">
       <div style="display:flex;justify-content:flex-end;margin-bottom:16px">
-        <button class="btn btn-primary" onclick="abrirModalInforme()" style="gap:8px">
+        <button id="btn-abrir-informe" class="btn btn-primary" onclick="abrirModalInforme()" style="gap:8px">
           <span style="font-size:15px">✉</span> Enviar informe por correo
         </button>
       </div>
@@ -1295,6 +1295,9 @@ function actualizarUIUsuario(info) {
     else if (currentUserRole === 'USUARIO') roleEl.textContent = 'Usuario';
     else roleEl.textContent = '';
   }
+  // El botón de informe solo lo ven los ADMIN
+  const btnInforme = document.getElementById('btn-abrir-informe');
+  if (btnInforme) btnInforme.style.display = isAdmin() ? '' : 'none';
 }
 
 function guardarSesion() {
@@ -2151,6 +2154,7 @@ function abrirEditar(id) {
           <select id="e-unidad-tipo" style="width:100px">
             <option${cantUnit==='Unidades'?' selected':''}>Unidades</option>
             <option${cantUnit==='Kilos'?' selected':''}>Kilos</option>
+            <option${cantUnit==='Bloques'?' selected':''}>Bloques</option>
           </select>
         </div>
       </div>
@@ -2702,7 +2706,7 @@ function addEditBloque(data) {
     <div class="cinta-num">${n}</div>
     <div class="field">
       <label>Gramaje bloque (g)</label>
-      <input id="eb-gramaje-${n}" type="number" placeholder="Ej: 3300" value="${data?.gramaje_bloque_emp||''}">
+      <input id="eb-gramaje-${n}" type="number" oninput="calcularCamposEdit()" placeholder="Ej: 3300" value="${data?.gramaje_bloque_emp||''}">
     </div>
     <div class="field">
       <label>Tipo de queso</label>
@@ -2713,7 +2717,7 @@ function addEditBloque(data) {
     </div>
     <div class="field">
       <label>Cant. bloques</label>
-      <input id="eb-cant-${n}" type="number" placeholder="0" value="${data?.cant_bloques||''}">
+      <input id="eb-cant-${n}" type="number" oninput="calcularCamposEdit()" placeholder="0" value="${data?.cant_bloques||''}">
     </div>
     <div class="field">
       <label>Lote bloque empleado</label>
@@ -3653,6 +3657,7 @@ document.addEventListener('input', function(e) {
 // ═══════════════════════════════════════════════════════════
 
 function abrirModalInforme() {
+  if (!isAdmin()) { toast('Solo los administradores pueden enviar informes.', 'error'); return; }
   // Nombre por defecto con la fecha de hoy
   const hoy = new Date();
   const yyyy = hoy.getFullYear();
