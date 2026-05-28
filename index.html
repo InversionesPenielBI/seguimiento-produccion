@@ -2402,37 +2402,56 @@ async function guardarEdicion() {
 
     await sheetsUpdate(`PEDIDOS!A${rowNum}:AJ${rowNum}`, [updatedRow]);
 
-    // Handle cintas: eliminar quitadas + agregar nuevas
+    // ── CINTAS: actualizar existentes + agregar nuevas + eliminar quitadas ──
     const editItems = document.querySelectorAll('#edit-cintas-container .cinta-item');
     const existingIds = cintas.filter(c => c.id_pedido === editingId).map(c => c.id_cinta);
-    const newCintas = [];
+    const cintaUpdates = []; // { cintaId, values }
+    const newCintas    = [];
+
     editItems.forEach((item) => {
       const n = item.id.split('-')[1];
       const cintaId = item.dataset.cintaId;
-      if (!cintaId) {
+      const vals = [
+        document.getElementById('ec-dia-'      + n)?.value || '',
+        (document.getElementById('ec-prod-'    + n)?.value || '').toUpperCase(),
+        (document.getElementById('ec-cod-'     + n)?.value || '').toUpperCase(),
+        (document.getElementById('ec-cinta-'   + n)?.value || '').toUpperCase(),
+        document.getElementById('ec-cant-'     + n)?.value || '',
+        'Unidades',
+        (document.getElementById('ec-obs-cinta-' + n)?.value || '').toUpperCase(),
+      ];
+      if (cintaId) {
+        cintaUpdates.push({ cintaId, vals }); // actualizar fila existente
+      } else {
         newCintas.push([
           editingId + '_C' + (existingIds.length + newCintas.length + 1),
-          editingId,
-          document.getElementById('ec-dia-' + n)?.value || '',
-          (document.getElementById('ec-prod-' + n)?.value || '').toUpperCase(),
-          (document.getElementById('ec-cod-' + n)?.value || '').toUpperCase(),
-          (document.getElementById('ec-cinta-' + n)?.value || '').toUpperCase(),
-          document.getElementById('ec-cant-' + n)?.value || '',
-          'Unidades',
-          (document.getElementById('ec-obs-cinta-' + n)?.value || '').toUpperCase(),
-          now,
+          editingId, ...vals, now,
         ]);
       }
     });
+
+    // Obtener mapa id→fila de CINTAS una sola vez (sirve para updates Y deletes)
+    let cinAllRows = [];
+    if (cintaUpdates.length > 0 || deletedCintaIds.length > 0) {
+      cinAllRows = (await sheetsGet('CINTAS!A:A')).values || [];
+    }
+
+    // Actualizar cintas existentes modificadas (columnas C a I)
+    for (const upd of cintaUpdates) {
+      for (let i = 1; i < cinAllRows.length; i++) {
+        if ((cinAllRows[i][0] || '').trim() === upd.cintaId) {
+          await sheetsUpdate(`CINTAS!C${i+1}:I${i+1}`, [upd.vals]);
+          break;
+        }
+      }
+    }
 
     if (newCintas.length > 0) {
       await sheetsAppend('CINTAS!A:J', newCintas);
     }
 
-    // Eliminar del sheet las cintas que el usuario quitó
+    // Eliminar cintas quitadas
     if (deletedCintaIds.length > 0) {
-      const cinAllData = await sheetsGet('CINTAS!A:A');
-      const cinAllRows = cinAllData.values || [];
       const rowsToDelete = [];
       for (let i = 1; i < cinAllRows.length; i++) {
         if (deletedCintaIds.includes((cinAllRows[i][0] || '').trim())) rowsToDelete.push(i + 1);
@@ -2447,34 +2466,53 @@ async function guardarEdicion() {
       deletedCintaIds = [];
     }
 
-    // Manejar bloques nuevos
+    // ── BLOQUES: actualizar existentes + agregar nuevos + eliminar quitados ──
     const editBloqueItems = document.querySelectorAll('#edit-bloques-container .cinta-item');
     const existingBloqueIds = bloques.filter(b => b.id_pedido === editingId).map(b => b.id_bloque);
-    const newBloques = [];
+    const bloqueUpdates = []; // { bloqueId, vals }
+    const newBloques    = [];
+
     editBloqueItems.forEach((item) => {
       const n = item.id.split('-')[1];
       const bloqueId = item.dataset.bloqueId;
-      if (!bloqueId) {
+      const vals = [
+        document.getElementById('eb-gramaje-' + n)?.value || '',
+        (document.getElementById('eb-tipo-'   + n)?.value || '').toUpperCase(),
+        document.getElementById('eb-cant-'    + n)?.value || '',
+        document.getElementById('eb-lote-'    + n)?.value || '',
+      ];
+      if (bloqueId) {
+        bloqueUpdates.push({ bloqueId, vals }); // actualizar fila existente
+      } else {
         newBloques.push([
           editingId + '_B' + (existingBloqueIds.length + newBloques.length + 1),
-          editingId,
-          document.getElementById('eb-gramaje-' + n)?.value || '',
-          (document.getElementById('eb-tipo-' + n)?.value || '').toUpperCase(),
-          document.getElementById('eb-cant-' + n)?.value || '',
-          document.getElementById('eb-lote-' + n)?.value || '',
-          now,
+          editingId, ...vals, now,
         ]);
       }
     });
+
+    // Obtener mapa id→fila de BLOQUES una sola vez
+    let blqAllRows = [];
+    if (bloqueUpdates.length > 0 || deletedBloqueIds.length > 0) {
+      blqAllRows = (await sheetsGet('BLOQUES!A:A')).values || [];
+    }
+
+    // Actualizar bloques existentes modificados (columnas C a F)
+    for (const upd of bloqueUpdates) {
+      for (let i = 1; i < blqAllRows.length; i++) {
+        if ((blqAllRows[i][0] || '').trim() === upd.bloqueId) {
+          await sheetsUpdate(`BLOQUES!C${i+1}:F${i+1}`, [upd.vals]);
+          break;
+        }
+      }
+    }
 
     if (newBloques.length > 0) {
       await sheetsAppend('BLOQUES!A:G', newBloques);
     }
 
-    // Eliminar bloques que el usuario quitó
+    // Eliminar bloques quitados
     if (deletedBloqueIds.length > 0) {
-      const blqAllData = await sheetsGet('BLOQUES!A:A');
-      const blqAllRows = blqAllData.values || [];
       const blqRowsToDelete = [];
       for (let i = 1; i < blqAllRows.length; i++) {
         if (deletedBloqueIds.includes((blqAllRows[i][0] || '').trim())) blqRowsToDelete.push(i + 1);
