@@ -10,6 +10,7 @@
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://accounts.google.com/gsi/client"></script>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.1/package/dist/xlsx.full.min.js"></script>
 <style>
 :root {
   --bg: #F7F6F2;
@@ -547,6 +548,55 @@ table.data-table {
   .dash-metrics { grid-template-columns: repeat(2, 1fr); }
   .dash-grid { grid-template-columns: 1fr; }
 }
+
+/* ── Modal Informe ── */
+.informe-radio-group {
+  display: flex; flex-direction: column; gap: 10px;
+}
+.informe-radio-item {
+  display: flex; align-items: center; gap: 10px;
+  padding: 10px 14px; border-radius: var(--radius);
+  border: 1.5px solid var(--border2); cursor: pointer;
+  transition: all .15s; background: var(--surface);
+}
+.informe-radio-item:hover { border-color: var(--accent-mid); background: var(--accent-light); }
+.informe-radio-item.selected { border-color: var(--accent); background: var(--accent-light); }
+.informe-radio-item input[type=radio] { accent-color: var(--accent); width: 15px; height: 15px; cursor: pointer; }
+.informe-radio-label { font-size: 13px; font-weight: 500; color: var(--text); }
+.informe-radio-sub { font-size: 11px; color: var(--text3); margin-top: 1px; }
+
+.destinatarios-list { display: flex; flex-direction: column; gap: 8px; }
+.destinatario-row { display: flex; align-items: center; gap: 8px; }
+.destinatario-row input {
+  flex: 1; padding: 8px 11px;
+  border: 1px solid var(--border2); border-radius: var(--radius);
+  background: var(--surface); color: var(--text);
+  font-family: 'DM Sans', sans-serif; font-size: 13px;
+}
+.destinatario-row input:focus { outline: none; border-color: var(--accent-mid); box-shadow: 0 0 0 3px rgba(64,145,108,.12); }
+
+.add-destinatario {
+  display: flex; align-items: center; gap: 8px; padding: 8px 12px;
+  border: 1px dashed var(--border2); border-radius: var(--radius);
+  cursor: pointer; color: var(--text2); font-size: 12px; font-weight: 500;
+  background: none; font-family: 'DM Sans', sans-serif; width: 100%;
+  transition: all .15s; margin-top: 4px;
+}
+.add-destinatario:hover { border-color: var(--accent-mid); color: var(--accent); background: var(--accent-light); }
+
+.informe-section-title {
+  font-size: 11px; font-weight: 600; color: var(--text2);
+  text-transform: uppercase; letter-spacing: .06em;
+  margin-bottom: 10px;
+}
+
+.btn-send-informe {
+  background: var(--accent); color: #fff;
+  border-color: var(--accent); font-weight: 600;
+  min-width: 140px; justify-content: center;
+}
+.btn-send-informe:hover { background: #122438; border-color: #122438; }
+.btn-send-informe:disabled { opacity: .6; cursor: not-allowed; }
 </style>
 </head>
 <body>
@@ -920,6 +970,11 @@ table.data-table {
 
     <!-- ═══ VIEW: DASHBOARD ═══ -->
     <div class="view" id="view-dashboard">
+      <div style="display:flex;justify-content:flex-end;margin-bottom:16px">
+        <button class="btn btn-primary" onclick="abrirModalInforme()" style="gap:8px">
+          <span style="font-size:15px">✉</span> Enviar informe por correo
+        </button>
+      </div>
       <div id="dashboard-content">
         <div class="empty-state"><div class="empty-state-text">Cargando dashboard...</div></div>
       </div>
@@ -981,6 +1036,100 @@ table.data-table {
   </div>
 </div>
 
+<!-- Modal informe por correo -->
+<div class="modal-bg" id="modal-informe">
+  <div class="modal" style="max-width:560px">
+    <div class="modal-header">
+      <div class="modal-title">Enviar informe por correo</div>
+      <button class="btn btn-sm" onclick="cerrarModalInforme()">Cerrar</button>
+    </div>
+    <div class="modal-body" style="display:flex;flex-direction:column;gap:22px">
+
+      <!-- Filtro de pedidos -->
+      <div>
+        <div class="informe-section-title">Pedidos a incluir</div>
+        <div class="informe-radio-group" id="informe-filtros">
+          <label class="informe-radio-item selected" onclick="seleccionarFiltroInforme(this,'todos')">
+            <input type="radio" name="informe-filtro" value="todos" checked>
+            <div>
+              <div class="informe-radio-label">Todos los pedidos</div>
+              <div class="informe-radio-sub">Exporta el historial completo sin importar estado ni fecha</div>
+            </div>
+          </label>
+          <label class="informe-radio-item" onclick="seleccionarFiltroInforme(this,'abiertos')">
+            <input type="radio" name="informe-filtro" value="abiertos">
+            <div>
+              <div class="informe-radio-label">Solo pedidos abiertos</div>
+              <div class="informe-radio-sub">Únicamente los que están en estado ABIERTO</div>
+            </div>
+          </label>
+          <label class="informe-radio-item" onclick="seleccionarFiltroInforme(this,'cerrados')">
+            <input type="radio" name="informe-filtro" value="cerrados">
+            <div>
+              <div class="informe-radio-label">Solo pedidos cerrados</div>
+              <div class="informe-radio-sub">Únicamente los que están en estado CERRADO</div>
+            </div>
+          </label>
+          <label class="informe-radio-item" onclick="seleccionarFiltroInforme(this,'fechas')">
+            <input type="radio" name="informe-filtro" value="fechas">
+            <div style="width:100%">
+              <div class="informe-radio-label">Rango de fechas de entrega</div>
+              <div class="informe-radio-sub">Filtra por fecha de entrega del pedido</div>
+              <div id="informe-rango-fechas" style="display:none;margin-top:10px;display:none">
+                <div style="display:flex;align-items:center;gap:10px">
+                  <div class="field" style="flex:1">
+                    <label>Desde</label>
+                    <input type="date" id="informe-fecha-desde">
+                  </div>
+                  <div class="field" style="flex:1">
+                    <label>Hasta</label>
+                    <input type="date" id="informe-fecha-hasta">
+                  </div>
+                </div>
+              </div>
+            </div>
+          </label>
+        </div>
+      </div>
+
+      <!-- Nombre del archivo -->
+      <div>
+        <div class="informe-section-title">Nombre del archivo</div>
+        <div style="display:flex;align-items:center;gap:8px">
+          <input id="informe-nombre" class="field" style="flex:1;padding:8px 11px;border:1px solid var(--border2);border-radius:var(--radius);font-family:'DM Sans',sans-serif;font-size:13px" placeholder="Ej: Informe_Mayo_2026">
+          <span style="font-size:13px;color:var(--text3);white-space:nowrap">.xlsx</span>
+        </div>
+      </div>
+
+      <!-- Destinatarios -->
+      <div>
+        <div class="informe-section-title">Destinatarios</div>
+        <div class="destinatarios-list" id="destinatarios-list">
+          <div class="destinatario-row">
+            <input type="email" placeholder="correo@ejemplo.com" class="dest-email">
+            <button class="btn btn-xs btn-danger" onclick="quitarDestinatario(this)" title="Quitar" style="flex-shrink:0">✕</button>
+          </div>
+        </div>
+        <button class="add-destinatario" onclick="agregarDestinatario()" style="margin-top:8px">
+          <span style="font-size:16px;font-weight:300">+</span> Agregar destinatario
+        </button>
+      </div>
+
+      <!-- Info de lo que se incluye -->
+      <div id="informe-preview-info" style="background:var(--surface2);border:1px solid var(--border);border-radius:var(--radius);padding:10px 14px;font-size:12px;color:var(--text2)">
+        El archivo Excel tendrá <strong>3 hojas</strong>: <em>PEDIDOS</em>, <em>CINTAS</em> y <em>BLOQUES</em>, con toda la información de los pedidos seleccionados.
+      </div>
+
+    </div>
+    <div class="modal-footer">
+      <button class="btn" onclick="cerrarModalInforme()">Cancelar</button>
+      <button class="btn btn-send-informe" id="btn-enviar-informe" onclick="enviarInforme()">
+        <span id="btn-informe-label">✉ Enviar informe</span>
+      </button>
+    </div>
+  </div>
+</div>
+
 <!-- Toast -->
 <div class="toast" id="toast"></div>
 
@@ -990,13 +1139,13 @@ table.data-table {
 // ═══════════════════════════════════════════════════════════
 const SHEET_ID = '1iEtI6zBBNMMDMpt4f2l73UKe4tUmKRgBBbp8N7UHvhQ';
 const CLIENT_ID = '472930002147-of08gfnkeuu57gsbpgl48g5b20bvk3sp.apps.googleusercontent.com';
-const SCOPES = 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email';
+const SCOPES = 'https://www.googleapis.com/auth/spreadsheets https://www.googleapis.com/auth/userinfo.profile https://www.googleapis.com/auth/userinfo.email https://www.googleapis.com/auth/gmail.send';
 const API_KEY = ''; // no se usa con OAuth
 
 // Sesión: tiempo máximo de inactividad antes de cerrar sesión automáticamente (en ms)
 // 8 horas — el usuario puede refrescar la página dentro de esta ventana sin perder la sesión
 const INACTIVITY_TIMEOUT_MS = 8 * 60 * 60 * 1000;
-const SESSION_STORAGE_KEY = 'peniel_session_v2'; // v2: incluye scope de email para roles
+const SESSION_STORAGE_KEY = 'peniel_session_v3'; // v3: incluye scope gmail.send para informes
 let inactivityTimerId = null;
 
 let accessToken = null;
@@ -3305,6 +3454,295 @@ document.addEventListener('input', function(e) {
     el.setSelectionRange(pos, pos);
   }
 });
+
+// ═══════════════════════════════════════════════════════════
+// INFORME POR CORREO
+// ═══════════════════════════════════════════════════════════
+
+function abrirModalInforme() {
+  // Nombre por defecto con la fecha de hoy
+  const hoy = new Date();
+  const yyyy = hoy.getFullYear();
+  const mm = String(hoy.getMonth() + 1).padStart(2, '0');
+  const dd = String(hoy.getDate()).padStart(2, '0');
+  document.getElementById('informe-nombre').value = `Informe_Produccion_${yyyy}-${mm}-${dd}`;
+
+  // Reset filtro al primero
+  document.querySelectorAll('.informe-radio-item').forEach(el => el.classList.remove('selected'));
+  const primera = document.querySelector('.informe-radio-item');
+  if (primera) primera.classList.add('selected');
+  const radio = document.querySelector('input[name="informe-filtro"][value="todos"]');
+  if (radio) radio.checked = true;
+  document.getElementById('informe-rango-fechas').style.display = 'none';
+
+  // Reset destinatarios (deja solo 1 campo vacío)
+  const lista = document.getElementById('destinatarios-list');
+  lista.innerHTML = `
+    <div class="destinatario-row">
+      <input type="email" placeholder="correo@ejemplo.com" class="dest-email">
+      <button class="btn btn-xs btn-danger" onclick="quitarDestinatario(this)" title="Quitar">✕</button>
+    </div>`;
+
+  // Resetear botón
+  const btn = document.getElementById('btn-enviar-informe');
+  btn.disabled = false;
+  document.getElementById('btn-informe-label').textContent = '✉ Enviar informe';
+
+  document.getElementById('modal-informe').classList.add('open');
+}
+
+function cerrarModalInforme() {
+  document.getElementById('modal-informe').classList.remove('open');
+}
+
+function seleccionarFiltroInforme(labelEl, valor) {
+  // Marcar visualmente el seleccionado
+  document.querySelectorAll('.informe-radio-item').forEach(el => el.classList.remove('selected'));
+  labelEl.classList.add('selected');
+  // Mostrar/ocultar rango de fechas
+  const rangoDiv = document.getElementById('informe-rango-fechas');
+  rangoDiv.style.display = valor === 'fechas' ? 'block' : 'none';
+}
+
+function agregarDestinatario() {
+  const lista = document.getElementById('destinatarios-list');
+  const div = document.createElement('div');
+  div.className = 'destinatario-row';
+  div.innerHTML = `
+    <input type="email" placeholder="correo@ejemplo.com" class="dest-email">
+    <button class="btn btn-xs btn-danger" onclick="quitarDestinatario(this)" title="Quitar">✕</button>`;
+  lista.appendChild(div);
+  div.querySelector('input').focus();
+}
+
+function quitarDestinatario(btn) {
+  const lista = document.getElementById('destinatarios-list');
+  const filas = lista.querySelectorAll('.destinatario-row');
+  if (filas.length <= 1) {
+    // Si es el único, solo limpia el valor
+    const input = filas[0].querySelector('input');
+    if (input) input.value = '';
+    return;
+  }
+  btn.closest('.destinatario-row').remove();
+}
+
+function filtrarPedidosInforme() {
+  const filtro = document.querySelector('input[name="informe-filtro"]:checked')?.value || 'todos';
+  let resultado = pedidos.slice();
+
+  if (filtro === 'abiertos') {
+    resultado = resultado.filter(p => p.estado === 'ABIERTO');
+  } else if (filtro === 'cerrados') {
+    resultado = resultado.filter(p => p.estado === 'CERRADO');
+  } else if (filtro === 'fechas') {
+    const desde = document.getElementById('informe-fecha-desde').value;
+    const hasta = document.getElementById('informe-fecha-hasta').value;
+    if (!desde && !hasta) return { error: 'Debes indicar al menos una fecha (Desde o Hasta).' };
+    if (desde) resultado = resultado.filter(p => (p.fecha_entrega || '') >= desde);
+    if (hasta) resultado = resultado.filter(p => (p.fecha_entrega || '') <= hasta);
+  }
+
+  return { pedidos: resultado };
+}
+
+function generarXLSX(pedidosFiltrados) {
+  if (typeof XLSX === 'undefined') {
+    throw new Error('La librería Excel (SheetJS) no está disponible. Recarga la página e inténtalo nuevamente.');
+  }
+
+  const wb = XLSX.utils.book_new();
+
+  // ── HOJA 1: PEDIDOS ──────────────────────────────────────
+  const pedidosHeader = [
+    'N°','ID Pedido','Estado','Cliente','Producto','Presentación','Peso (g)',
+    'Menú/Ref','Operador','Marca','Cant. Solicitada','Fecha Entrega',
+    'Fecha Fabricación','F. Vto. 1','F. Vto. 2','F. Vto. 3','Mes',
+    'Operación','Sellado','Gramaje (g)','Gram. Bloque (g)','Bloques Gastados',
+    'Unidades Obtenidas','Lib. Entregadas','Kg. Entregados','Lib. Tajadas',
+    'Retal (lb)','% Retal','Diferencia','% Diferencia',
+    'Tipo Queso','Lote','Observaciones','Fecha Creación','Última Edición'
+  ];
+  const pedidosRows = pedidosFiltrados.map((p, i) => [
+    i + 1, p.id, p.estado, p.cliente, p.producto, p.presentacion,
+    p.peso ? parseFloat(p.peso) : '', p.menu, p.operador, p.marca,
+    p.cantidad ? parseFloat(p.cantidad) : '', p.fecha_entrega,
+    p.fecha_fab, p.fecha_vto, p.vto2 || '', p.vto3 || '', p.mes,
+    p.operacion, p.sellado,
+    p.gramaje ? parseFloat(p.gramaje) : '',
+    p.gram_bloque ? parseFloat(p.gram_bloque) : '',
+    p.bloques ? parseFloat(p.bloques) : '',
+    p.unidades ? parseFloat(p.unidades) : '',
+    p.libras_ent ? parseFloat(p.libras_ent) : '',
+    p.kilos_ent ? parseFloat(p.kilos_ent) : '',
+    p.libras_taj ? parseFloat(p.libras_taj) : '',
+    p.retal ? parseFloat(p.retal) : '',
+    p.pct_retal ? parseFloat(p.pct_retal) : '',
+    p.diferencia ? parseFloat(p.diferencia) : '',
+    p.pct_dif ? parseFloat(p.pct_dif) : '',
+    p.tipo_queso || '', p.lote || '', p.observaciones || '',
+    p.fecha_creacion || '', p.ultima_edicion || ''
+  ]);
+  const wsPedidos = XLSX.utils.aoa_to_sheet([pedidosHeader, ...pedidosRows]);
+  // Anchos de columna aproximados
+  wsPedidos['!cols'] = pedidosHeader.map((h, i) => ({ wch: [4,14,9,14,14,10,7,10,10,8,11,12,12,12,12,12,6,16,18,8,12,10,10,11,11,9,7,6,8,7,10,8,22,18,18][i] || 12 }));
+  XLSX.utils.book_append_sheet(wb, wsPedidos, 'PEDIDOS');
+
+  // ── HOJA 2: CINTAS ───────────────────────────────────────
+  const pedidoIds = new Set(pedidosFiltrados.map(p => p.id));
+  const cintasFil = cintas.filter(c => pedidoIds.has(c.id_pedido));
+  const cintasHeader = ['N°','ID Cinta','ID Pedido','Cliente','Producto','Día de Corte','Producto Empleado','Código','Cinta','Cantidad','Unidad','Observación'];
+  const cintasRows = cintasFil.map((c, i) => {
+    const p = pedidosFiltrados.find(x => x.id === c.id_pedido) || {};
+    return [i+1, c.id_cinta, c.id_pedido, p.cliente||'', p.producto||'', c.dia_corte||'', c.prod_empleado||'', c.codigo||'', c.cinta||'', c.cantidad_cinta ? parseFloat(c.cantidad_cinta)||'' : '', c.unidad_cinta||'', c.obs_cinta||''];
+  });
+  const wsCintas = XLSX.utils.aoa_to_sheet([cintasHeader, ...cintasRows]);
+  wsCintas['!cols'] = cintasHeader.map((_, i) => ({ wch: [4,14,14,14,14,12,20,10,10,8,8,22][i] || 12 }));
+  XLSX.utils.book_append_sheet(wb, wsCintas, 'CINTAS');
+
+  // ── HOJA 3: BLOQUES ──────────────────────────────────────
+  const bloquesFil = bloques.filter(b => pedidoIds.has(b.id_pedido));
+  const bloquesHeader = ['N°','ID Bloque','ID Pedido','Cliente','Producto','Gramaje Bloque (g)','Tipo Queso','Cant. Bloques','Lote','Fecha Registro'];
+  const bloquesRows = bloquesFil.map((b, i) => {
+    const p = pedidosFiltrados.find(x => x.id === b.id_pedido) || {};
+    return [i+1, b.id_bloque, b.id_pedido, p.cliente||'', p.producto||'', b.gramaje_bloque_emp ? parseFloat(b.gramaje_bloque_emp)||'' : '', b.tipo_queso||'', b.cant_bloques ? parseFloat(b.cant_bloques)||'' : '', b.lote_bloque||'', b.fecha_reg||''];
+  });
+  const wsBloques = XLSX.utils.aoa_to_sheet([bloquesHeader, ...bloquesRows]);
+  wsBloques['!cols'] = bloquesHeader.map((_, i) => ({ wch: [4,14,14,14,14,14,14,10,10,18][i] || 12 }));
+  XLSX.utils.book_append_sheet(wb, wsBloques, 'BLOQUES');
+
+  // Retornar como base64
+  return XLSX.write(wb, { bookType: 'xlsx', type: 'base64' });
+}
+
+function rfcEncodeStr(str) {
+  // Codificación RFC 2047 para headers con caracteres no-ASCII
+  if (!str) return '';
+  if (/^[\x20-\x7E]*$/.test(str)) return str; // solo ASCII → sin codificar
+  return '=?UTF-8?B?' + btoa(unescape(encodeURIComponent(str))) + '?=';
+}
+
+async function enviarEmailGmail(destinos, asunto, nombreArchivo, xlsxBase64, totalPedidos) {
+  await asegurarTokenVigente();
+
+  const boundary = 'Peniel_Informe_' + Date.now();
+  const fechaStr = new Date().toLocaleDateString('es-CO', { day: 'numeric', month: 'long', year: 'numeric' });
+  const cuerpo = [
+    'Informe de Produccion - Inversiones Peniel',
+    '',
+    'Adjunto encontrara el informe de produccion en formato Excel (.xlsx).',
+    '',
+    'Detalles del informe:',
+    '  - Pedidos incluidos : ' + totalPedidos,
+    '  - Fecha de generacion: ' + fechaStr,
+    '  - Generado por      : ' + (userInfo?.name || userInfo?.email || 'Sistema'),
+    '',
+    'El archivo contiene 3 hojas:',
+    '  1. PEDIDOS  - Datos principales de cada pedido',
+    '  2. CINTAS   - Dias de corte y codigos de produccion',
+    '  3. BLOQUES  - Bloques de queso empleados',
+    '',
+    '---',
+    'Seguimiento de Produccion | Inversiones Peniel | Planta Mosquera',
+  ].join('\n');
+
+  // Construir mensaje MIME
+  const nl = '\r\n';
+  let mime = '';
+  mime += `MIME-Version: 1.0${nl}`;
+  mime += `From: ${userInfo?.email || 'me'}${nl}`;
+  mime += `To: ${destinos.join(', ')}${nl}`;
+  mime += `Subject: ${rfcEncodeStr(asunto)}${nl}`;
+  mime += `Content-Type: multipart/mixed; boundary="${boundary}"${nl}${nl}`;
+
+  // Parte 1: texto plano
+  mime += `--${boundary}${nl}`;
+  mime += `Content-Type: text/plain; charset=UTF-8${nl}`;
+  mime += `Content-Transfer-Encoding: base64${nl}${nl}`;
+  mime += btoa(unescape(encodeURIComponent(cuerpo))) + nl;
+
+  // Parte 2: adjunto xlsx
+  const safeFileName = nombreArchivo.replace(/[^\w\-_.]/g, '_') + '.xlsx';
+  mime += `--${boundary}${nl}`;
+  mime += `Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet${nl}`;
+  mime += `Content-Disposition: attachment; filename="${safeFileName}"${nl}`;
+  mime += `Content-Transfer-Encoding: base64${nl}${nl}`;
+  mime += xlsxBase64 + nl;
+
+  mime += `--${boundary}--`;
+
+  // Base64url del mensaje completo
+  const rawEncoded = btoa(mime).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+  const resp = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/messages/send', {
+    method: 'POST',
+    headers: {
+      Authorization: 'Bearer ' + accessToken,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ raw: rawEncoded }),
+  });
+
+  if (!resp.ok) {
+    let msg = `Error ${resp.status}`;
+    try { const e = await resp.json(); msg = e.error?.message || msg; } catch(_) {}
+    throw new Error(msg);
+  }
+  return resp.json();
+}
+
+async function enviarInforme() {
+  const btn = document.getElementById('btn-enviar-informe');
+  const label = document.getElementById('btn-informe-label');
+
+  // ── Validar nombre de archivo ────────────────────────────
+  const nombreArchivo = (document.getElementById('informe-nombre').value || '').trim();
+  if (!nombreArchivo) {
+    toast('Ingresa un nombre para el archivo', 'error'); return;
+  }
+
+  // ── Validar destinatarios ────────────────────────────────
+  const inputs = document.querySelectorAll('#destinatarios-list .dest-email');
+  const destinos = [];
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+  for (const inp of inputs) {
+    const val = inp.value.trim();
+    if (!val) continue;
+    if (!emailRegex.test(val)) {
+      toast(`Correo inválido: ${val}`, 'error'); inp.focus(); return;
+    }
+    destinos.push(val);
+  }
+  if (destinos.length === 0) {
+    toast('Agrega al menos un destinatario', 'error'); return;
+  }
+
+  // ── Filtrar pedidos ──────────────────────────────────────
+  const resultado = filtrarPedidosInforme();
+  if (resultado.error) { toast(resultado.error, 'error'); return; }
+  const pedidosFiltrados = resultado.pedidos;
+  if (pedidosFiltrados.length === 0) {
+    toast('No hay pedidos con el filtro seleccionado', 'error'); return;
+  }
+
+  // ── Generar y enviar ─────────────────────────────────────
+  btn.disabled = true;
+  label.textContent = 'Generando archivo...';
+
+  try {
+    const xlsxBase64 = generarXLSX(pedidosFiltrados);
+    label.textContent = 'Enviando...';
+    const asunto = `Informe Producción Peniel — ${nombreArchivo}`;
+    await enviarEmailGmail(destinos, asunto, nombreArchivo, xlsxBase64, pedidosFiltrados.length);
+    cerrarModalInforme();
+    toast(`Informe enviado a ${destinos.length === 1 ? destinos[0] : destinos.length + ' destinatarios'} ✓`, 'success');
+  } catch (e) {
+    toast('Error al enviar: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    label.textContent = '✉ Enviar informe';
+  }
+}
 
 window.onload = () => {
   instalarListenersActividad();
