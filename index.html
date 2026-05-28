@@ -1708,6 +1708,25 @@ async function guardarPedido() {
     const id = 'P' + Date.now();
     const mes = fecha ? new Date(fecha + 'T12:00:00').toLocaleString('es-CO', {month:'short'}).toUpperCase() : '';
 
+    // Calcular valores derivados como floats puros (sin formato colombiano)
+    // para que Sheets los almacene como números y no como celdas de porcentaje.
+    const grm_p  = parseFloat(document.getElementById('f-gramaje').value)   || 0;
+    const unds_p = parseFloat(document.getElementById('f-unidades').value)   || 0;
+    const retl_p = parseFloat(document.getElementById('f-retal').value)      || 0;
+    const retlB_p = parseFloat(document.getElementById('f-retal-bocadillo')?.value) || 0;
+    let lbTaj_p = 0;
+    document.querySelectorAll('#bloques-container .cinta-item').forEach(item => {
+      const n = item.id.split('-')[1];
+      const g = parseFloat(document.getElementById('b-gramaje-' + n)?.value) || 0;
+      const c = parseFloat(document.getElementById('b-cant-'    + n)?.value) || 0;
+      if (g > 0 && c > 0) lbTaj_p += (g / 500) * c;
+    });
+    const lbEnt_p   = grm_p > 0 ? (unds_p * grm_p) / 500 : 0;
+    const kgEnt_p   = lbEnt_p / 2;
+    const pctRetl_p = lbTaj_p > 0 ? (retl_p  / lbTaj_p) * 100 : 0;
+    const dif_p     = lbTaj_p > 0 ?  lbTaj_p - lbEnt_p - retl_p  : 0;
+    const pctDif_p  = lbTaj_p > 0 ? (dif_p   / lbTaj_p) * 100 : 0;
+
     const rowPedido = [
       id, cliente,
       document.getElementById('f-menu').value,
@@ -1726,14 +1745,9 @@ async function guardarPedido() {
       document.getElementById('f-gram-bloque').value,
       document.getElementById('f-bloques').value,
       document.getElementById('f-unidades').value,
-      document.getElementById('f-libras-ent').value,
-      document.getElementById('f-kilos-ent').value,
-      document.getElementById('f-libras-taj').value,
-      document.getElementById('f-retal').value,
-      document.getElementById('f-retal-bocadillo')?.value || '',
-      document.getElementById('f-pct-retal').value,
-      document.getElementById('f-diferencia').value,
-      document.getElementById('f-pct-dif').value,
+      lbEnt_p, kgEnt_p, lbTaj_p,
+      retl_p, retlB_p,
+      pctRetl_p, dif_p, pctDif_p,
       '', // tipo_queso — ahora en hoja BLOQUES
       '', // lote — ahora en hoja BLOQUES
       document.getElementById('f-vto2').value,
@@ -1797,6 +1811,42 @@ function autoVto() {
 function actualizarPlaceholderCantidad() {
   const tipo = document.getElementById('f-unidad-tipo').value;
   document.getElementById('f-cantidad').placeholder = tipo === 'Kilos' ? '# Kilos' : '# Unidades';
+}
+
+// Versión de calcularCampos para el modal de edición (usa ids e- en lugar de f-)
+function calcularCamposEdit() {
+  const gramaje  = parseFloat(document.getElementById('e-gramaje')?.value)  || 0;
+  const unidades = parseFloat(document.getElementById('e-unidades')?.value) || 0;
+  const retal    = parseFloat(document.getElementById('e-retal')?.value)    || 0;
+  let librasTaj = 0;
+  document.querySelectorAll('#edit-bloques-container .cinta-item').forEach(item => {
+    const n = item.id.split('-')[1];
+    const g = parseFloat(document.getElementById('eb-gramaje-' + n)?.value) || 0;
+    const c = parseFloat(document.getElementById('eb-cant-'    + n)?.value) || 0;
+    if (g > 0 && c > 0) librasTaj += (g / 500) * c;
+  });
+  const librasEnt = gramaje > 0 ? (unidades * gramaje) / 500 : 0;
+  const kilosEnt  = librasEnt / 2;
+  const pctRetal  = librasTaj > 0 ? (retal / librasTaj) * 100 : 0;
+  const diferencia = librasTaj > 0 ? librasTaj - librasEnt - retal : 0;
+  const pctDif    = librasTaj > 0 ? (diferencia / librasTaj) * 100 : 0;
+  const fmt2 = v => v.toLocaleString('es-CO', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  const setV = (id, v, cond) => { const el = document.getElementById(id); if (el) el.value = cond ? fmt2(v) : ''; };
+  setV('e-libras-ent', librasEnt, librasEnt > 0);
+  setV('e-kilos-ent',  kilosEnt,  kilosEnt  > 0);
+  setV('e-libras-taj', librasTaj, librasTaj > 0);
+  const ep = document.getElementById('e-pct-retal');
+  if (ep) ep.value = pctRetal !== 0 ? fmt2(pctRetal) + '%' : '';
+  const ed = document.getElementById('e-diferencia');
+  if (ed) ed.value = diferencia !== 0 ? fmt2(diferencia) : '';
+  const epd = document.getElementById('e-pct-dif');
+  if (epd) epd.value = pctDif !== 0 ? fmt2(pctDif) + '%' : '';
+  // Mostrar/ocultar retal bocadillo en modal edición
+  const prod = document.getElementById('e-producto')?.value || '';
+  const isBoc = prod === 'QUESO CON BOCADILLO' || prod === 'QUESO DOBLE CREMA (BOCADILLO)';
+  const bocFld = document.getElementById('efield-retal-bocadillo');
+  if (bocFld) bocFld.style.display = isBoc ? '' : 'none';
+  if (!isBoc) { const rb = document.getElementById('e-retal-bocadillo'); if (rb) rb.value = ''; }
 }
 
 function calcularCampos() {
@@ -2070,11 +2120,21 @@ function abrirEditar(id) {
     btnEstadoModal.style.display = (!esAbierto && !isAdmin()) ? 'none' : '';
   }
 
+  // Parsear cantidad + unidad (guardado como "100 Unidades" o "50 Kilos")
+  const cantParts = (p.cantidad || '').split(' ');
+  const cantNum  = cantParts[0] || '';
+  const cantUnit = cantParts.slice(1).join(' ') || 'Unidades';
+  const fmtCalc  = v => (v && parseFloat(v) !== 0)
+    ? parseFloat(v).toLocaleString('es-CO',{minimumFractionDigits:2,maximumFractionDigits:2})
+    : '';
+  const isBocEdit = (p.producto||'') === 'QUESO CON BOCADILLO' || (p.producto||'') === 'QUESO DOBLE CREMA (BOCADILLO)';
+
   document.getElementById('modal-body').innerHTML = `
+    <!-- Datos del pedido -->
     <div class="form-grid form-grid-3 section-gap">
       <div class="field"><label>Cliente</label><input id="e-cliente" value="${p.cliente||''}"></div>
-      <div class="field"><label>Producto</label><input id="e-producto" value="${p.producto||''}"></div>
-      <div class="field"><label>Fecha entrega</label><input id="e-fecha" type="date" value="${p.fecha_entrega||''}"></div>
+      <div class="field"><label>Producto</label><input id="e-producto" oninput="calcularCamposEdit()" value="${p.producto||''}"></div>
+      <div class="field"><label>Menú / Referencia</label><input id="e-menu" value="${p.menu||''}"></div>
     </div>
     <div class="form-grid form-grid-4 section-gap">
       <div class="field"><label>Presentación</label>
@@ -2084,20 +2144,82 @@ function abrirEditar(id) {
         </select>
       </div>
       <div class="field"><label>Peso (g)</label><input id="e-peso" type="number" value="${p.peso||''}"></div>
-      <div class="field"><label>Cantidad solicitada</label><input id="e-cantidad" type="number" value="${p.cantidad||''}"></div>
-      <div class="field"><label>Unidades obtenidas</label><input id="e-unidades" type="number" value="${p.unidades||''}"></div>
+      <div class="field">
+        <label>Cantidad solicitada</label>
+        <div style="display:flex;gap:6px">
+          <input id="e-cantidad" type="number" value="${cantNum}" style="flex:1" placeholder="Cantidad">
+          <select id="e-unidad-tipo" style="width:100px">
+            <option${cantUnit==='Unidades'?' selected':''}>Unidades</option>
+            <option${cantUnit==='Kilos'?' selected':''}>Kilos</option>
+          </select>
+        </div>
+      </div>
+      <div class="field"><label>Fecha entrega</label><input id="e-fecha" type="date" value="${p.fecha_entrega||''}"></div>
     </div>
-    <div class="form-grid form-grid-4 section-gap">
-      <div class="field"><label>Gramaje (g)</label><input id="e-gramaje" type="number" value="${p.gramaje||''}"></div>
-      <div class="field"><label>Gramaje bloque</label><input id="e-gram-bloque" type="number" value="${p.gram_bloque||''}"></div>
-      <div class="field"><label>Bloques gastados</label><input id="e-bloques" type="number" value="${p.bloques||''}"></div>
-      <div class="field"><label>Retal (lb)</label><input id="e-retal" type="number" step="0.01" value="${p.retal||''}"></div>
-    </div>
-    <div class="form-grid form-grid-2 section-gap">
+    <div class="form-grid form-grid-3 section-gap">
       <div class="field"><label>Fecha fabricación</label><input id="e-fab" type="date" value="${p.fecha_fab||''}"></div>
       <div class="field"><label>L / F. Vto.</label><input id="e-vto" type="date" value="${p.fecha_vto||''}"></div>
+      <div class="field"><label>Marca</label>
+        <select id="e-marca">
+          <option value="">Seleccionar...</option>
+          ${['GUALI','LATTI','LATTERIA','QUESARTE'].map(o=>`<option${o===p.marca?' selected':''}>${o}</option>`).join('')}
+        </select>
+      </div>
     </div>
-    <div class="field section-gap"><label>Observaciones</label><input id="e-obs" value="${p.observaciones||''}"></div>
+    <!-- Datos de producción -->
+    <div class="divider" style="margin:14px 0 10px"></div>
+    <div style="font-size:11px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.06em;margin-bottom:10px">Datos de producción</div>
+    <div class="form-grid form-grid-4 section-gap">
+      <div class="field"><label>Operación realizada</label>
+        <select id="e-operacion">
+          <option value="">Seleccionar...</option>
+          ${['CORTE Y EMPAQUE','EMPAQUE'].map(o=>`<option${o===p.operacion?' selected':''}>${o}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field"><label>Tipo de sellado</label>
+        <select id="e-sellado">
+          <option value="">Seleccionar...</option>
+          ${['SELLADO MANUAL','TERMOFORMADORA','EMPACADORA AL VACIO','FLOW PACK','SELLADORA DE PEDAL'].map(o=>`<option${o===p.sellado?' selected':''}>${o}</option>`).join('')}
+        </select>
+      </div>
+      <div class="field"><label>Gramaje (g)</label><input id="e-gramaje" type="number" oninput="calcularCamposEdit()" value="${p.gramaje||''}"></div>
+      <div class="field"><label>Gramaje bloque (g)</label><input id="e-gram-bloque" type="number" value="${p.gram_bloque||''}"></div>
+    </div>
+    <div class="form-grid form-grid-3 section-gap">
+      <div class="field"><label>Bloques gastados</label><input id="e-bloques" type="number" value="${p.bloques||''}"></div>
+      <div class="field"><label>Unidades obtenidas</label><input id="e-unidades" type="number" oninput="calcularCamposEdit()" value="${p.unidades||''}"></div>
+      <div class="field"><label>Retal queso (libras)</label><input id="e-retal" type="number" oninput="calcularCamposEdit()" step="0.01" value="${parseFloat(p.retal)||''}"></div>
+      <div class="field" id="efield-retal-bocadillo" style="display:${isBocEdit?'':'none'}">
+        <label>Retal bocadillo (libras)</label>
+        <input id="e-retal-bocadillo" type="number" oninput="calcularCamposEdit()" step="0.01" value="${parseFloat(p.retal_bocadillo)||''}">
+      </div>
+    </div>
+    <div style="display:flex;align-items:center;gap:8px;margin:14px 0 8px">
+      <div style="flex:1;height:1px;background:var(--border)"></div>
+      <span style="font-size:10px;font-weight:600;color:var(--text3);text-transform:uppercase;letter-spacing:.08em;white-space:nowrap">Calculado automáticamente</span>
+      <div style="flex:1;height:1px;background:var(--border)"></div>
+    </div>
+    <div class="form-grid form-grid-3">
+      <div class="field"><label>Libras entregadas <span style="color:var(--accent-mid);font-size:10px">AUTO</span></label>
+        <input id="e-libras-ent" readonly style="background:var(--surface2);color:var(--accent);font-weight:600;font-family:var(--font-mono,monospace);font-size:13px" placeholder="Calculado" value="${fmtCalc(p.libras_ent)}"></div>
+      <div class="field"><label>Kilos entregados <span style="color:var(--accent-mid);font-size:10px">AUTO</span></label>
+        <input id="e-kilos-ent" readonly style="background:var(--surface2);color:var(--accent);font-weight:600;font-family:var(--font-mono,monospace);font-size:13px" placeholder="Calculado" value="${fmtCalc(p.kilos_ent)}"></div>
+      <div class="field"><label>Libras tajadas <span style="color:var(--accent-mid);font-size:10px">AUTO</span></label>
+        <input id="e-libras-taj" readonly style="background:var(--surface2);color:var(--accent);font-weight:600;font-family:var(--font-mono,monospace);font-size:13px" placeholder="Calculado" value="${fmtCalc(p.libras_taj)}"></div>
+    </div>
+    <div class="form-grid form-grid-3" style="margin-top:8px">
+      <div class="field"><label>% Retal <span style="color:var(--accent-mid);font-size:10px">AUTO</span></label>
+        <input id="e-pct-retal" readonly style="background:var(--danger-light);color:var(--danger);font-weight:600;font-family:var(--font-mono,monospace);font-size:13px" placeholder="Calculado" value="${fmtCalc(p.pct_retal)+'%'}"></div>
+      <div class="field"><label>Diferencia <span style="color:var(--accent-mid);font-size:10px">AUTO</span></label>
+        <input id="e-diferencia" readonly style="background:var(--surface2);color:var(--text2);font-weight:600;font-family:var(--font-mono,monospace);font-size:13px" placeholder="Calculado" value="${fmtCalc(p.diferencia)}"></div>
+      <div class="field"><label>% Diferencia <span style="color:var(--accent-mid);font-size:10px">AUTO</span></label>
+        <input id="e-pct-dif" readonly style="background:var(--surface2);color:var(--text2);font-weight:600;font-family:var(--font-mono,monospace);font-size:13px" placeholder="Calculado" value="${fmtCalc(p.pct_dif)+'%'}"></div>
+    </div>
+    <div class="form-grid form-grid-3" style="margin-top:14px">
+      <div class="field"><label>F/Vto. 2</label><input id="e-vto2" type="date" value="${p.vto2||''}"></div>
+      <div class="field"><label>F/Vto. 3</label><input id="e-vto3" type="date" value="${p.vto3||''}"></div>
+      <div class="field"><label>Observaciones</label><input id="e-obs" value="${p.observaciones||''}"></div>
+    </div>
 
     <div class="divider"></div>
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
@@ -2220,48 +2342,56 @@ async function guardarEdicion() {
     const fecha = document.getElementById('e-fecha').value;
     const mes = fecha ? new Date(fecha+'T12:00:00').toLocaleString('es-CO',{month:'short'}).toUpperCase() : p.mes;
 
-    // Recalcular campos derivados desde los inputs del modal
-    const grm  = parseFloat(document.getElementById('e-gramaje').value) || 0;
+    // Recalcular campos derivados como floats puros (igual que guardarPedido)
+    const grm  = parseFloat(document.getElementById('e-gramaje').value)  || 0;
     const unds = parseFloat(document.getElementById('e-unidades').value) || 0;
-    const retl = parseFloat(document.getElementById('e-retal').value) || 0;
+    const retl = parseFloat(document.getElementById('e-retal').value)    || 0;
+    const retlB = parseFloat(document.getElementById('e-retal-bocadillo')?.value) || 0;
 
     let lbTaj = 0;
     document.querySelectorAll('#edit-bloques-container .cinta-item').forEach(item => {
       const n = item.id.split('-')[1];
       const g = parseFloat(document.getElementById('eb-gramaje-' + n)?.value) || 0;
-      const c = parseFloat(document.getElementById('eb-cant-' + n)?.value) || 0;
+      const c = parseFloat(document.getElementById('eb-cant-'    + n)?.value) || 0;
       if (g > 0 && c > 0) lbTaj += (g / 500) * c;
     });
 
     const lbEnt   = (grm > 0 && unds > 0) ? (unds * grm) / 500 : (parseFloat(p.libras_ent) || 0);
     const kgEnt   = lbEnt / 2;
     const lbTajFn = lbTaj > 0 ? lbTaj : (parseFloat(p.libras_taj) || 0);
-    const pctRetl = lbTajFn > 0 ? (retl / lbTajFn) * 100 : 0;
-    const dif     = lbTajFn > 0 ? lbTajFn - lbEnt - retl : 0;
-    const pctDf   = lbTajFn > 0 ? (dif / lbTajFn) * 100 : 0;
+    const pctRetl = lbTajFn > 0 ? (retl  / lbTajFn) * 100 : 0;
+    const dif     = lbTajFn > 0 ?  lbTajFn - lbEnt - retl  : 0;
+    const pctDf   = lbTajFn > 0 ? (dif   / lbTajFn) * 100 : 0;
+
+    const cantNum  = document.getElementById('e-cantidad').value;
+    const cantUnit = document.getElementById('e-unidad-tipo')?.value || 'Unidades';
 
     const updatedRow = [
       editingId,
       document.getElementById('e-cliente').value,
-      p.menu, fecha,
+      document.getElementById('e-menu')?.value || p.menu,
+      fecha,
       document.getElementById('e-producto').value,
       document.getElementById('e-pres').value,
       document.getElementById('e-peso').value,
       p.operador,
-      document.getElementById('e-cantidad').value,
+      cantNum + ' ' + cantUnit,
       document.getElementById('e-fab').value,
       document.getElementById('e-vto').value,
-      p.marca, mes, p.fecha_corte, p.operacion, p.sellado,
+      document.getElementById('e-marca')?.value || p.marca,
+      mes, p.fecha_corte,
+      document.getElementById('e-operacion')?.value || p.operacion,
+      document.getElementById('e-sellado')?.value  || p.sellado,
       document.getElementById('e-gramaje').value,
       document.getElementById('e-gram-bloque').value,
       document.getElementById('e-bloques').value,
       document.getElementById('e-unidades').value,
       lbEnt, kgEnt, lbTajFn,
-      document.getElementById('e-retal').value,
-      p.retal_bocadillo || '',
+      retl, retlB,
       pctRetl, dif, pctDf, p.tipo_queso,
       p.lote,
-      p.vto2, p.vto3,
+      document.getElementById('e-vto2')?.value || p.vto2,
+      document.getElementById('e-vto3')?.value || p.vto3,
       document.getElementById('e-obs').value,
       p.estado, p.fecha_creacion, now,
     ];
@@ -2856,21 +2986,39 @@ let histFiltros  = { clientes: [], productos: [], presentaciones: [], estados: [
 
 const LB_TO_KG = 0.5;
 
-// Convierte valores con formato colombiano devueltos por Sheets (ej: "6.039,60", "0,56%")
-// a número JS correcto. El API devuelve strings formateados con la configuración regional
-// del Sheet, lo que hace que parseFloat falle con miles separados por punto.
+// Convierte números devueltos por Sheets a float JS.
+// Detecta el separador decimal por contexto:
+//   • Dot + coma presentes → el ÚLTIMO es decimal  ("6.039,60"→6039.6 | "6,039.60"→6039.6)
+//   • Solo coma            → coma es decimal        ("33,8"→33.8)
+//   • Solo punto o ninguno → punto es decimal        ("33.8"→33.8 | "6039"→6039)
+//   • Porcentajes: devuelve el número tal cual       ("0,56%"→0.56 | "56%"→56)
+//     (para porcentajes almacenados como celda % en Sheets inglés que devuelven "56%",
+//      guardarPedido ahora almacena el valor crudo, así que los registros nuevos
+//      siempre vienen sin símbolo %; los registros viejos con "56%" mostrarán 56%
+//      hasta que el usuario los vuelva a guardar)
 function parseColNumber(val) {
   if (val === undefined || val === null || val === '') return '';
   if (typeof val === 'number') return val;
   const s = String(val).trim();
   if (s === '') return '';
-  // Porcentaje: "0,56%" → 0.56   |   "-0,56%" → -0.56
-  if (s.endsWith('%')) {
-    return parseFloat(s.slice(0, -1).replace(/\./g, '').replace(',', '.')) || 0;
+  const isPercent = s.endsWith('%');
+  const core = isPercent ? s.slice(0, -1).trim() : s;
+  const hasDot   = core.includes('.');
+  const hasComma = core.includes(',');
+  let result;
+  if (hasDot && hasComma) {
+    // Ambos separadores: el último es decimal
+    if (core.lastIndexOf(',') > core.lastIndexOf('.')) {
+      result = parseFloat(core.replace(/\./g, '').replace(',', '.')); // "6.039,60"→6039.6
+    } else {
+      result = parseFloat(core.replace(/,/g, ''));                    // "6,039.60"→6039.6
+    }
+  } else if (hasComma) {
+    result = parseFloat(core.replace(',', '.'));  // "33,8"→33.8
+  } else {
+    result = parseFloat(core);                   // "33.8"→33.8  ← ya NO se quita el punto
   }
-  // Número colombiano: "6.039,60" → 6039.6   |   "-33,8" → -33.8   |   "33.8" → 33.8
-  // Quita puntos de miles y convierte coma decimal a punto
-  return parseFloat(s.replace(/\./g, '').replace(',', '.')) || 0;
+  return isNaN(result) ? 0 : result;
 }
 
 function fmtNum(n, dec = 2) {
