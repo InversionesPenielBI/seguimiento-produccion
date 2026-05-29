@@ -949,7 +949,7 @@ table.data-table {
                 <th style="text-align:right">Diferencia</th>
                 <th style="text-align:right">% Dif.</th>
                 <th>Estado</th>
-                <th>Cintas</th>
+                <th>Día de corte/empaque</th>
                 <th></th>
               </tr>
             </thead>
@@ -2002,7 +2002,7 @@ function applyHistFilters() {
       <div class="metric-sub">${abiertos} abiertos</div>
     </div>
     <div class="metric-card">
-      <div class="metric-label">Cintas totales</div>
+      <div class="metric-label">Códigos totales</div>
       <div class="metric-value">${totCintas}</div>
       <div class="metric-sub">días de corte</div>
     </div>
@@ -2044,10 +2044,20 @@ function applyHistFilters() {
     const pctDif     = p.pct_dif ? parseFloat(p.pct_dif) : 0;
     const fNum = (v,d=2) => v ? fmtNum(v,d) : '—';
 
+    const cintasHeaderRow = pCintas.length > 0 ? `<tr class="row-cinta" data-pedido="${p.id}" style="display:none;background:var(--surface2)">
+        <td style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.05em">#</td>
+        <td style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.05em">Día de corte</td>
+        <td colspan="2" style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.05em">Producto empleado</td>
+        <td style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.05em">Código</td>
+        <td style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.05em">Cinta</td>
+        <td style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.05em;text-align:right">Cantidad</td>
+        <td style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.05em">Unidad</td>
+        <td colspan="10"></td>
+      </tr>` : '';
     const cintasRows = pCintas.map((c,i) => {
       const isLast = i === pCintas.length - 1;
       return `<tr class="row-cinta${isLast?' row-cinta-last':''}" data-pedido="${p.id}" style="display:none">
-        <td style="color:var(--text3);font-size:11px">Día ${i+1}</td>
+        <td style="color:var(--text3);font-size:11px">${i+1}</td>
         <td style="color:var(--text2);font-size:12px">${fmtFecha(c.dia_corte)}</td>
         <td colspan="2" style="color:var(--text2);font-size:12px">${c.prod_empleado||'—'}</td>
         <td class="mono" style="color:var(--text)">${c.codigo||'—'}</td>
@@ -2081,8 +2091,8 @@ function applyHistFilters() {
         <td>${estadoHtml}</td>
         <td>
           ${pCintas.length > 0
-            ? `<button class="toggle-cintas-btn" onclick="toggleCintas('${p.id}')">${pCintas.length} cinta${pCintas.length!==1?'s':''}</button>`
-            : '<span class="text-muted" style="font-size:11px">Sin cintas</span>'}
+            ? `<button class="toggle-cintas-btn" onclick="toggleCintas('${p.id}')">${pCintas.length} código${pCintas.length!==1?'s':''}</button>`
+            : '<span class="text-muted" style="font-size:11px">Sin códigos</span>'}
         </td>
         <td>
           <div style="display:flex;gap:4px">
@@ -2091,7 +2101,7 @@ function applyHistFilters() {
           </div>
         </td>
       </tr>
-      ${cintasRows}`;
+      ${cintasHeaderRow}${cintasRows}`;
   }).join('');
 }
 
@@ -2237,7 +2247,7 @@ function abrirEditar(id) {
 
     <div class="divider" style="margin-top:16px"></div>
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px">
-      <div style="font-size:12px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.05em">Cintas de producción</div>
+      <div style="font-size:12px;font-weight:600;color:var(--text2);text-transform:uppercase;letter-spacing:.05em">Días de corte/empaque</div>
       <span style="font-size:11px;color:var(--text3)">Agrega días conforme se trabajan</span>
     </div>
     <div class="cintas-list" id="edit-cintas-container"></div>
@@ -2603,7 +2613,7 @@ async function eliminarPedido(id) {
   const nCintas = cintas.filter(c => c.id_pedido === id).length;
   const nBloques = bloques.filter(b => b.id_pedido === id).length;
   const msg = '¿Eliminar el pedido de ' + p.cliente + ' — ' + p.producto + '?'
-    + (nCintas > 0 ? '\nSe eliminarán también ' + nCintas + ' cinta(s) asociada(s).' : '')
+    + (nCintas > 0 ? '\nSe eliminarán también ' + nCintas + ' código(s) de corte asociado(s).' : '')
     + (nBloques > 0 ? '\nSe eliminarán también ' + nBloques + ' bloque(s) empleado(s).' : '')
     + '\n\nEsta acción no se puede deshacer.';
   if (!confirm(msg)) return;
@@ -3023,7 +3033,7 @@ function applyResumenFilters() {
 // DASHBOARD
 // ═══════════════════════════════════════════════════════════
 const dashCharts = {};
-let dashFiltros = { clientes: [], productos: [], presentaciones: [], sellados: [], anio: '', mes: '', fechaDesde: '', fechaHasta: '' };
+let dashFiltros = { clientes: [], productos: [], presentaciones: [], sellados: [], anios: [], meses: [], fechaDesde: '', fechaHasta: '' };
 let histFiltros  = { clientes: [], productos: [], presentaciones: [], estados: [], fechaDesde: '', fechaHasta: '', buscar: '' };
 
 const LB_TO_KG = 0.5;
@@ -3170,26 +3180,14 @@ function renderDashboard() {
     dfb._built = true;
     dfb.innerHTML = '';
 
-    // Año select
-    const anioSel = document.createElement('select');
-    anioSel.id = 'dash-anio';
-    anioSel.className = 'ms-btn';
-    anioSel.style.cssText = 'cursor:pointer;padding:7px 11px';
-    anioSel.addEventListener('change', e => { dashFiltros.anio = e.target.value; applyDashFilters(); });
-    dfb.appendChild(anioSel);
-
-    // Mes select
-    const mesSel = document.createElement('select');
-    mesSel.id = 'dash-mes';
-    mesSel.className = 'ms-btn';
-    mesSel.style.cssText = 'cursor:pointer;padding:7px 11px';
-    mesSel.addEventListener('change', e => { dashFiltros.mes = e.target.value; applyDashFilters(); });
-    dfb.appendChild(mesSel);
-
+    dfb._msAnio         = buildMultiSelect('Año',          anios,    dashFiltros.anios,          applyDashFilters);
+    dfb._msMes          = buildMultiSelect('Mes',          meses,    dashFiltros.meses,          applyDashFilters);
     dfb._msCliente      = buildMultiSelect('Cliente',      clientes, dashFiltros.clientes,       applyDashFilters);
     dfb._msProducto     = buildMultiSelect('Producto',     prods,    dashFiltros.productos,      applyDashFilters);
     dfb._msPresentacion = buildMultiSelect('Presentación', pres,     dashFiltros.presentaciones, applyDashFilters);
     dfb._msSellado      = buildMultiSelect('Sellado',      sellados, dashFiltros.sellados,       applyDashFilters);
+    dfb.appendChild(dfb._msAnio);
+    dfb.appendChild(dfb._msMes);
     dfb.appendChild(dfb._msCliente);
     dfb.appendChild(dfb._msProducto);
     dfb.appendChild(dfb._msPresentacion);
@@ -3218,28 +3216,18 @@ function renderDashboard() {
     infoSpan.style.cssText = 'font-size:12px;margin-left:auto';
     dfb.appendChild(infoSpan);
   } else {
+    dfb._msAnio?.updateOptions(anios);
+    dfb._msMes?.updateOptions(meses);
     dfb._msCliente?.updateOptions(clientes);
     dfb._msProducto?.updateOptions(prods);
     dfb._msPresentacion?.updateOptions(pres);
     dfb._msSellado?.updateOptions(sellados);
   }
 
-  // Poblar selects año/mes
-  const anioEl = document.getElementById('dash-anio');
-  const mesEl  = document.getElementById('dash-mes');
-  if (anioEl) {
-    anioEl.innerHTML = '<option value="">Todos los años</option>' +
-      anios.map(a => `<option value="${a}"${a===dashFiltros.anio?' selected':''}>${a}</option>`).join('');
-  }
-  if (mesEl) {
-    mesEl.innerHTML = '<option value="">Todos los meses</option>' +
-      meses.map(m => `<option value="${m}"${m===dashFiltros.mes?' selected':''}>${m}</option>`).join('');
-  }
-
   // Filtrar pedidos
   const fil = pedidos.filter(p => {
-    if (dashFiltros.anio && !p.fecha_entrega?.startsWith(dashFiltros.anio)) return false;
-    if (dashFiltros.mes  && !p.fecha_entrega?.startsWith(dashFiltros.mes))  return false;
+    if (dashFiltros.anios.length && !dashFiltros.anios.some(a => p.fecha_entrega?.startsWith(a))) return false;
+    if (dashFiltros.meses.length && !dashFiltros.meses.some(m => p.fecha_entrega?.startsWith(m))) return false;
     if (dashFiltros.clientes.length       && !dashFiltros.clientes.includes(p.cliente))           return false;
     if (dashFiltros.productos.length      && !dashFiltros.productos.includes(p.producto))          return false;
     if (dashFiltros.presentaciones.length && !dashFiltros.presentaciones.includes(p.presentacion)) return false;
@@ -3584,7 +3572,7 @@ function destruirChart(id) {
 
 function limpiarFiltrosDash() {
   dashFiltros.clientes = []; dashFiltros.productos = []; dashFiltros.presentaciones = [];
-  dashFiltros.sellados = []; dashFiltros.anio = ''; dashFiltros.mes = '';
+  dashFiltros.sellados = []; dashFiltros.anios = []; dashFiltros.meses = [];
   dashFiltros.fechaDesde = ''; dashFiltros.fechaHasta = '';
   const dfb = document.getElementById('dash-filter-bar');
   if (dfb) {
@@ -3735,6 +3723,9 @@ function seleccionarFiltroInforme(labelEl, valor) {
   // Marcar visualmente el seleccionado
   document.querySelectorAll('.informe-radio-item').forEach(el => el.classList.remove('selected'));
   labelEl.classList.add('selected');
+  // Asegurar que el radio quede checked (el onclick puede dispararse antes del estado nativo)
+  const radio = labelEl.querySelector('input[type="radio"]');
+  if (radio) radio.checked = true;
   // Mostrar/ocultar rango de fechas
   const rangoDiv = document.getElementById('informe-rango-fechas');
   rangoDiv.style.display = valor === 'fechas' ? 'block' : 'none';
@@ -3875,7 +3866,7 @@ async function enviarEmailGmail(destinos, asunto, nombreArchivo, xlsxBase64, tot
     '',
     'El archivo contiene 3 hojas:',
     '  1. PEDIDOS  - Datos principales de cada pedido',
-    '  2. CINTAS   - Dias de corte y codigos de produccion',
+    '  2. CINTAS   - Dias de corte/empaque y codigos de produccion',
     '  3. BLOQUES  - Bloques de queso empleados',
     '',
     '---',
