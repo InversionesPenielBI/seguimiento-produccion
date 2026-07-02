@@ -691,6 +691,25 @@ table.data-table {
 
       <div class="card">
         <div class="card-header">
+          <span class="card-title">Información Operativa</span>
+          <span class="card-sub">Identifica quién realiza el pedido — ambos campos obligatorios</span>
+        </div>
+        <div class="card-body">
+          <div class="form-grid form-grid-2">
+            <div class="field">
+              <label>Fecha de corte *</label>
+              <input id="f-fecha-corte" type="date">
+            </div>
+            <div class="field">
+              <label>Nombre del responsable *</label>
+              <input id="f-responsable" placeholder="Nombre de quien registra">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
           <span class="card-title">Información del pedido</span>
           <span class="card-sub">Campos obligatorios: Cliente, Producto, Fecha entrega</span>
         </div>
@@ -933,6 +952,7 @@ table.data-table {
           <table class="data-table">
             <thead>
               <tr>
+                <th>F. Corte</th>
                 <th>Cliente</th>
                 <th>Producto</th>
                 <th>Pres.</th>
@@ -950,11 +970,12 @@ table.data-table {
                 <th style="text-align:right">% Dif.</th>
                 <th>Estado</th>
                 <th>Día de corte/empaque</th>
+                <th>Responsable</th>
                 <th></th>
               </tr>
             </thead>
             <tbody id="hist-body">
-              <tr><td colspan="10" class="empty-state"><div class="empty-state-text">Cargando datos...</div></td></tr>
+              <tr><td colspan="20" class="empty-state"><div class="empty-state-text">Cargando datos...</div></td></tr>
             </tbody>
           </table>
         </div>
@@ -1159,7 +1180,7 @@ const COLS_PEDIDOS = ['id','cliente','menu','fecha_entrega','producto','presenta
   'operacion','sellado','gramaje','gram_bloque','bloques','unidades','libras_ent',
   'kilos_ent','libras_taj','retal','retal_bocadillo','pct_retal','diferencia','pct_dif',
   'tipo_queso','lote','vto2','vto3','observaciones','estado','fecha_creacion',
-  'ultima_edicion','unidad'];
+  'ultima_edicion','unidad','responsable'];
 function objToRow(o, cols) { return cols.map(c => (o[c] ?? '')); }
 function rowToObj(r, cols) { return Object.fromEntries(cols.map((c, i) => [c, r[i] ?? ''])); }
 
@@ -1587,7 +1608,7 @@ async function loadData() {
   setSyncStatus('Sincronizando...');
   try {
     const [pData, cData, bData] = await Promise.all([
-      sheetsGet('PEDIDOS!A2:AK5000'),
+      sheetsGet('PEDIDOS!A2:AL5000'),
       sheetsGet('CINTAS!A2:J5000'),
       sheetsGet('BLOQUES!A2:G5000'),
     ]);
@@ -1745,8 +1766,14 @@ async function guardarPedido() {
   const cliente = document.getElementById('f-cliente').value.trim();
   const producto = document.getElementById('f-producto').value.trim();
   const fecha = document.getElementById('f-fecha').value;
+  const fechaCorte = document.getElementById('f-fecha-corte').value;
+  const responsable = document.getElementById('f-responsable').value.trim();
   if (!cliente || !producto || !fecha) {
     toast('Completa los campos obligatorios: Cliente, Producto y Fecha de entrega', 'error');
+    return;
+  }
+  if (!fechaCorte || !responsable) {
+    toast('Completa la Información Operativa: Fecha de corte y Nombre del responsable', 'error');
     return;
   }
 
@@ -1790,7 +1817,7 @@ async function guardarPedido() {
       fecha_fab: document.getElementById('f-fab').value,
       fecha_vto: document.getElementById('f-vto').value,
       marca: document.getElementById('f-marca').value,
-      mes, fecha_corte: '',
+      mes, fecha_corte: fechaCorte,
       operacion: document.getElementById('f-operacion').value,
       sellado: document.getElementById('f-sellado').value,
       gramaje: document.getElementById('f-gramaje').value,
@@ -1806,10 +1833,11 @@ async function guardarPedido() {
       observaciones: safeText(document.getElementById('f-obs').value),
       estado: 'ABIERTO', fecha_creacion: now, ultima_edicion: now,
       unidad: unidadCant,
+      responsable: safeText(responsable),
     };
     const rowPedido = objToRow(pedidoObj, COLS_PEDIDOS);
 
-    await sheetsAppend('PEDIDOS!A:AK', [rowPedido]);
+    await sheetsAppend('PEDIDOS!A:AL', [rowPedido]);
 
     // Detalles (dias de corte y bloques). Si el pedido ya se guardo, un fallo aqui
     // NO debe llevar a recrear el pedido: se completan luego desde Editar (#5).
@@ -1949,7 +1977,7 @@ function calcularCampos() {
 
 function limpiarForm() {
   ['f-producto','f-menu','f-peso','f-cantidad','f-fab',
-   'f-vto','f-operador','f-gramaje','f-gram-bloque',
+   'f-vto','f-operador','f-responsable','f-fecha-corte','f-gramaje','f-gram-bloque',
    'f-bloques','f-unidades','f-retal',
    'f-vto2','f-vto3','f-obs',
    'f-libras-ent','f-kilos-ent','f-libras-taj','f-pct-retal','f-diferencia','f-pct-dif'
@@ -1997,6 +2025,18 @@ function renderHistorial() {
     buscarInput.addEventListener('input', () => { histFiltros.buscar = buscarInput.value; applyHistFilters(); });
     filterBar.appendChild(buscarInput);
 
+    // Rango de fecha de CORTE (justo después de Buscar)
+    const corteWrap = document.createElement('div');
+    corteWrap.className = 'date-range-wrap';
+    corteWrap.innerHTML = `
+      <span class="date-range-label">Corte</span>
+      <input type="date" id="h-corte-desde" title="Corte desde" value="${histFiltros.fechaCorteDesde}">
+      <span class="date-range-label">—</span>
+      <input type="date" id="h-corte-hasta" title="Corte hasta" value="${histFiltros.fechaCorteHasta}">`;
+    corteWrap.querySelector('#h-corte-desde').addEventListener('change', e => { histFiltros.fechaCorteDesde = e.target.value; applyHistFilters(); });
+    corteWrap.querySelector('#h-corte-hasta').addEventListener('change', e => { histFiltros.fechaCorteHasta = e.target.value; applyHistFilters(); });
+    filterBar.appendChild(corteWrap);
+
     // Multi-selects
     filterBar._msCliente = buildMultiSelect('Cliente', clientes, histFiltros.clientes, applyHistFilters);
     filterBar._msProducto = buildMultiSelect('Producto', prods, histFiltros.productos, applyHistFilters);
@@ -2026,9 +2066,12 @@ function renderHistorial() {
     btnLimpiar.addEventListener('click', () => {
       histFiltros.clientes = []; histFiltros.productos = []; histFiltros.presentaciones = [];
       histFiltros.estados = []; histFiltros.fechaDesde = ''; histFiltros.fechaHasta = ''; histFiltros.buscar = '';
+      histFiltros.fechaCorteDesde = ''; histFiltros.fechaCorteHasta = '';
       document.getElementById('h-buscar').value = '';
       document.getElementById('h-fecha-desde').value = '';
       document.getElementById('h-fecha-hasta').value = '';
+      document.getElementById('h-corte-desde').value = '';
+      document.getElementById('h-corte-hasta').value = '';
       filterBar._built = false; // force rebuild with cleared state
       renderHistorial();
     });
@@ -2051,6 +2094,8 @@ function applyHistFilters() {
     if (histFiltros.estados.length       && !histFiltros.estados.includes(p.estado))              return false;
     if (histFiltros.fechaDesde && (p.fecha_entrega||'') < histFiltros.fechaDesde) return false;
     if (histFiltros.fechaHasta && (p.fecha_entrega||'') > histFiltros.fechaHasta) return false;
+    if (histFiltros.fechaCorteDesde && (p.fecha_corte||'') < histFiltros.fechaCorteDesde) return false;
+    if (histFiltros.fechaCorteHasta && (p.fecha_corte||'') > histFiltros.fechaCorteHasta) return false;
     if (histFiltros.buscar && !`${p.cliente} ${p.producto} ${p.id}`.toLowerCase().includes(histFiltros.buscar.toLowerCase())) return false;
     return true;
   }).sort((a,b) => (b.fecha_entrega||'').localeCompare(a.fecha_entrega||''));
@@ -2087,7 +2132,7 @@ function applyHistFilters() {
 
   const tbody = document.getElementById('hist-body');
   if (!fil.length) {
-    tbody.innerHTML = `<tr><td colspan="18" class="empty-state"><div class="empty-state-text">No hay registros con estos filtros</div></td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="20" class="empty-state"><div class="empty-state-text">No hay registros con estos filtros</div></td></tr>`;
     return;
   }
 
@@ -2111,6 +2156,7 @@ function applyHistFilters() {
     const fNum = (v,d=2) => v ? fmtNum(v,d) : '—';
 
     const cintasHeaderRow = pCintas.length > 0 ? `<tr class="row-cinta" data-pedido="${p.id}" style="display:none;background:var(--surface2)">
+        <td></td>
         <td style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.05em">#</td>
         <td style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.05em">Día de corte</td>
         <td colspan="2" style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.05em">Producto empleado</td>
@@ -2118,11 +2164,12 @@ function applyHistFilters() {
         <td style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.05em">Cinta</td>
         <td style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.05em;text-align:right">Cantidad</td>
         <td style="font-size:10px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:.05em">Unidad</td>
-        <td colspan="10"></td>
+        <td colspan="11"></td>
       </tr>` : '';
     const cintasRows = pCintas.map((c,i) => {
       const isLast = i === pCintas.length - 1;
       return `<tr class="row-cinta${isLast?' row-cinta-last':''}" data-pedido="${p.id}" style="display:none">
+        <td></td>
         <td style="color:var(--text3);font-size:11px">${i+1}</td>
         <td style="color:var(--text2);font-size:12px">${fmtFecha(c.dia_corte)}</td>
         <td colspan="2" style="color:var(--text2);font-size:12px">${esc(c.prod_empleado||'—')}</td>
@@ -2131,12 +2178,13 @@ function applyHistFilters() {
         <td style="text-align:right;font-size:12px">${esc(c.cantidad_cinta||'—')}</td>
         <td style="font-size:12px;color:var(--text2)">${esc(c.unidad_cinta||'—')}</td>
         <td colspan="7"></td>
-        <td></td><td></td><td></td>
+        <td></td><td></td><td></td><td></td>
       </tr>`;
     }).join('');
 
     return `
       <tr class="row-pedido">
+        <td style="color:var(--text2);font-size:12px">${fmtFecha(p.fecha_corte)}</td>
         <td><strong>${esc(p.cliente)}</strong></td>
         <td>${esc(p.producto)}</td>
         <td><span class="badge ${bcls}">${esc(p.presentacion||'—')}</span></td>
@@ -2160,6 +2208,7 @@ function applyHistFilters() {
             ? `<button class="toggle-cintas-btn" onclick="toggleCintas('${p.id}')">${pCintas.length} código${pCintas.length!==1?'s':''}</button>`
             : '<span class="text-muted" style="font-size:11px">Sin códigos</span>'}
         </td>
+        <td style="font-size:12px;color:var(--text2)">${esc(p.responsable||'—')}</td>
         <td>
           <div style="display:flex;gap:4px">
             <button class="btn btn-xs" onclick="abrirEditar('${p.id}')">Editar</button>
@@ -2208,6 +2257,11 @@ function abrirEditar(id) {
   const isBocEdit = (p.producto||'') === 'QUESO CON BOCADILLO' || (p.producto||'') === 'QUESO DOBLE CREMA (BOCADILLO)';
 
   document.getElementById('modal-body').innerHTML = `
+    <!-- Información Operativa -->
+    <div class="form-grid form-grid-2 section-gap">
+      <div class="field"><label>Fecha de corte *</label><input id="e-fecha-corte" type="date" value="${p.fecha_corte||''}"></div>
+      <div class="field"><label>Nombre del responsable *</label><input id="e-responsable" value="${esc(p.responsable||'')}"></div>
+    </div>
     <!-- Datos del pedido -->
     <div class="form-grid form-grid-3 section-gap">
       <div class="field"><label>Cliente</label><input id="e-cliente" value="${esc(p.cliente||'')}"></div>
@@ -2408,6 +2462,13 @@ async function guardarEdicion() {
     return;
   }
 
+  const eFechaCorte = document.getElementById('e-fecha-corte')?.value || '';
+  const eResponsable = (document.getElementById('e-responsable')?.value || '').trim();
+  if (!eFechaCorte || !eResponsable) {
+    toast('Completa la Información Operativa: Fecha de corte y Nombre del responsable', 'error');
+    return;
+  }
+
   try {
     const data = await sheetsGet('PEDIDOS!A:A');
     const rows = data.values || [];
@@ -2458,7 +2519,7 @@ async function guardarEdicion() {
       fecha_fab: document.getElementById('e-fab').value,
       fecha_vto: document.getElementById('e-vto').value,
       marca: document.getElementById('e-marca')?.value || p.marca,
-      mes, fecha_corte: p.fecha_corte,
+      mes, fecha_corte: eFechaCorte,
       operacion: document.getElementById('e-operacion')?.value || p.operacion,
       sellado: document.getElementById('e-sellado')?.value || p.sellado,
       gramaje: document.getElementById('e-gramaje').value,
@@ -2474,10 +2535,11 @@ async function guardarEdicion() {
       observaciones: safeText(document.getElementById('e-obs').value),
       estado: p.estado, fecha_creacion: p.fecha_creacion, ultima_edicion: now,
       unidad: cantUnit,
+      responsable: safeText(eResponsable),
     };
     const updatedRow = objToRow(pedidoObj, COLS_PEDIDOS);
 
-    await sheetsUpdate(`PEDIDOS!A${rowNum}:AK${rowNum}`, [updatedRow]);
+    await sheetsUpdate(`PEDIDOS!A${rowNum}:AL${rowNum}`, [updatedRow]);
 
     // ── CINTAS: actualizar existentes + agregar nuevas + eliminar quitadas ──
     const editItems = document.querySelectorAll('#edit-cintas-container .cinta-item');
@@ -2949,7 +3011,7 @@ function buildMultiSelect(placeholder, options, selected, onChange) {
 // ═══════════════════════════════════════════════════════════
 // RESUMEN
 // ═══════════════════════════════════════════════════════════
-let resumenFiltros = { clientes: [], productos: [], presentaciones: [], fechaDesde: '', fechaHasta: '' };
+let resumenFiltros = { clientes: [], productos: [], presentaciones: [], fechaDesde: '', fechaHasta: '', fechaCorteDesde: '', fechaCorteHasta: '' };
 
 function renderResumen() {
   const cont = document.getElementById('resumen-content');
@@ -2976,6 +3038,17 @@ function renderResumen() {
     fb.appendChild(fb._msProducto);
     fb.appendChild(fb._msPresentacion);
 
+    const corteWrap = document.createElement('div');
+    corteWrap.className = 'date-range-wrap';
+    corteWrap.innerHTML = `
+      <span class="date-range-label">Corte</span>
+      <input type="date" id="r-corte-desde" value="${resumenFiltros.fechaCorteDesde}">
+      <span class="date-range-label">—</span>
+      <input type="date" id="r-corte-hasta" value="${resumenFiltros.fechaCorteHasta}">`;
+    corteWrap.querySelector('#r-corte-desde').addEventListener('change', e => { resumenFiltros.fechaCorteDesde = e.target.value; applyResumenFilters(); });
+    corteWrap.querySelector('#r-corte-hasta').addEventListener('change', e => { resumenFiltros.fechaCorteHasta = e.target.value; applyResumenFilters(); });
+    fb.appendChild(corteWrap);
+
     const dateWrap = document.createElement('div');
     dateWrap.className = 'date-range-wrap';
     dateWrap.innerHTML = `
@@ -2993,8 +3066,11 @@ function renderResumen() {
     btnLimpiar.addEventListener('click', () => {
       resumenFiltros.clientes = []; resumenFiltros.productos = [];
       resumenFiltros.presentaciones = []; resumenFiltros.fechaDesde = ''; resumenFiltros.fechaHasta = '';
+      resumenFiltros.fechaCorteDesde = ''; resumenFiltros.fechaCorteHasta = '';
       document.getElementById('r-fecha-desde').value = '';
       document.getElementById('r-fecha-hasta').value = '';
+      document.getElementById('r-corte-desde').value = '';
+      document.getElementById('r-corte-hasta').value = '';
       fb._built = false;
       renderResumen();
     });
@@ -3021,6 +3097,8 @@ function applyResumenFilters() {
     if (resumenFiltros.presentaciones.length && !resumenFiltros.presentaciones.includes(p.presentacion)) return false;
     if (resumenFiltros.fechaDesde && (p.fecha_entrega||'') < resumenFiltros.fechaDesde) return false;
     if (resumenFiltros.fechaHasta && (p.fecha_entrega||'') > resumenFiltros.fechaHasta) return false;
+    if (resumenFiltros.fechaCorteDesde && (p.fecha_corte||'') < resumenFiltros.fechaCorteDesde) return false;
+    if (resumenFiltros.fechaCorteHasta && (p.fecha_corte||'') > resumenFiltros.fechaCorteHasta) return false;
     return true;
   });
 
@@ -3059,7 +3137,7 @@ function applyResumenFilters() {
         <div class="table-wrap">
           <table class="data-table" style="font-size:12px">
             <thead><tr>
-              <th>Producto</th><th>Presentación</th><th>F. Entrega</th>
+              <th>F. Corte</th><th>Producto</th><th>Presentación</th><th>F. Entrega</th>
               <th style="text-align:right">Cant. Sol.</th>
               <th style="text-align:right">Unidades</th>
               <th style="text-align:right">Retal (lb)</th>
@@ -3071,6 +3149,7 @@ function applyResumenFilters() {
                 const retal = parseFloat(p.retal)||0;
                 const bcls = pBadge[p.presentacion] || 'badge-gray';
                 return `<tr>
+                  <td style="color:var(--text2)">${fmtFecha(p.fecha_corte)}</td>
                   <td><strong>${esc(p.producto||'—')}</strong></td>
                   <td>${p.presentacion?`<span class="badge ${bcls}">${esc(p.presentacion)}</span>`:'—'}</td>
                   <td style="color:var(--text2)">${fmtFecha(p.fecha_entrega)}</td>
@@ -3093,8 +3172,8 @@ function applyResumenFilters() {
 // DASHBOARD
 // ═══════════════════════════════════════════════════════════
 const dashCharts = {};
-let dashFiltros = { clientes: [], productos: [], presentaciones: [], sellados: [], anios: [], meses: [], fechaDesde: '', fechaHasta: '' };
-let histFiltros  = { clientes: [], productos: [], presentaciones: [], estados: [], fechaDesde: '', fechaHasta: '', buscar: '' };
+let dashFiltros = { clientes: [], productos: [], presentaciones: [], sellados: [], anios: [], meses: [], fechaDesde: '', fechaHasta: '', fechaCorteDesde: '', fechaCorteHasta: '' };
+let histFiltros  = { clientes: [], productos: [], presentaciones: [], estados: [], fechaDesde: '', fechaHasta: '', buscar: '', fechaCorteDesde: '', fechaCorteHasta: '' };
 
 const LB_TO_KG = 0.5;
 
@@ -3253,6 +3332,17 @@ function renderDashboard() {
     dfb.appendChild(dfb._msPresentacion);
     dfb.appendChild(dfb._msSellado);
 
+    const corteWrap = document.createElement('div');
+    corteWrap.className = 'date-range-wrap';
+    corteWrap.innerHTML = `
+      <span class="date-range-label">Corte</span>
+      <input type="date" id="dash-corte-desde" value="${dashFiltros.fechaCorteDesde}">
+      <span class="date-range-label">—</span>
+      <input type="date" id="dash-corte-hasta" value="${dashFiltros.fechaCorteHasta}">`;
+    corteWrap.querySelector('#dash-corte-desde').addEventListener('change', e => { dashFiltros.fechaCorteDesde = e.target.value; applyDashFilters(); });
+    corteWrap.querySelector('#dash-corte-hasta').addEventListener('change', e => { dashFiltros.fechaCorteHasta = e.target.value; applyDashFilters(); });
+    dfb.appendChild(corteWrap);
+
     const dateWrap = document.createElement('div');
     dateWrap.className = 'date-range-wrap';
     dateWrap.innerHTML = `
@@ -3294,6 +3384,8 @@ function renderDashboard() {
     if (dashFiltros.sellados.length       && !dashFiltros.sellados.includes(p.sellado))            return false;
     if (dashFiltros.fechaDesde && (p.fecha_entrega||'') < dashFiltros.fechaDesde) return false;
     if (dashFiltros.fechaHasta && (p.fecha_entrega||'') > dashFiltros.fechaHasta) return false;
+    if (dashFiltros.fechaCorteDesde && (p.fecha_corte||'') < dashFiltros.fechaCorteDesde) return false;
+    if (dashFiltros.fechaCorteHasta && (p.fecha_corte||'') > dashFiltros.fechaCorteHasta) return false;
     return true;
   });
 
@@ -3570,6 +3662,7 @@ function renderDashboard() {
       retalLoteBody.innerHTML = `<table style="border-collapse:collapse;font-size:12px;width:100%">
         <thead><tr>
           <th style="${thS}">Producto</th>
+          <th style="${thS}">Fecha corte</th>
           <th style="${thS}">Fecha entrega</th>
           <th style="${thS}">Lote bloque empleado</th>
           <th style="${thN}">Lbs retal</th>
@@ -3587,6 +3680,7 @@ function renderDashboard() {
               : (p.lote ? fmtFecha(p.lote) : '—');
             return `<tr style="${bg}">
               <td style="${tdS}"><strong>${esc(p.producto||'—')}</strong></td>
+              <td style="${tdS}">${fmtFecha(p.fecha_corte)}</td>
               <td style="${tdS}">${fmtFecha(p.fecha_entrega)}</td>
               <td style="${tdS}">${lotesStr}</td>
               <td style="${tdN};color:var(--danger);font-weight:600">${fmtNum(retal,2)}</td>
@@ -3594,7 +3688,7 @@ function renderDashboard() {
             </tr>`;
           }).join('')}
           <tr style="background:var(--accent-light)">
-            <td colspan="3" style="padding:7px 12px;font-weight:700;font-size:11px;color:var(--accent);border-top:2px solid var(--border)">TOTAL</td>
+            <td colspan="4" style="padding:7px 12px;font-weight:700;font-size:11px;color:var(--accent);border-top:2px solid var(--border)">TOTAL</td>
             <td style="${tdN};font-weight:700;color:var(--accent);border-top:2px solid var(--border)">${fmtNum(pedConRetal.reduce((a,p)=>a+(parseFloat(p.retal)||0),0),2)}</td>
             <td style="${tdN};font-weight:700;color:var(--accent);border-top:2px solid var(--border)">${fmtNum(pedConRetal.reduce((a,p)=>a+(parseFloat(p.retal)||0)*0.5,0),2)}</td>
           </tr>
@@ -3634,12 +3728,17 @@ function limpiarFiltrosDash() {
   dashFiltros.clientes = []; dashFiltros.productos = []; dashFiltros.presentaciones = [];
   dashFiltros.sellados = []; dashFiltros.anios = []; dashFiltros.meses = [];
   dashFiltros.fechaDesde = ''; dashFiltros.fechaHasta = '';
+  dashFiltros.fechaCorteDesde = ''; dashFiltros.fechaCorteHasta = '';
   const dfb = document.getElementById('dash-filter-bar');
   if (dfb) {
     const desde = document.getElementById('dash-fecha-desde');
     const hasta = document.getElementById('dash-fecha-hasta');
     if (desde) desde.value = '';
     if (hasta) hasta.value = '';
+    const cDesde = document.getElementById('dash-corte-desde');
+    const cHasta = document.getElementById('dash-corte-hasta');
+    if (cDesde) cDesde.value = '';
+    if (cHasta) cHasta.value = '';
     dfb._built = false; // force filter bar rebuild to reset checkboxes
   }
   renderDashboard();
@@ -3843,7 +3942,7 @@ function generarXLSX(pedidosFiltrados) {
   // ── HOJA 1: PEDIDOS ──────────────────────────────────────
   const pedidosHeader = [
     'N°','ID Pedido','Estado','Cliente','Producto','Presentación','Peso (g)',
-    'Menú/Ref','Operador','Marca','Cant. Solicitada','Fecha Entrega',
+    'Menú/Ref','Operador','Responsable','Marca','Cant. Solicitada','Fecha Entrega','Fecha Corte',
     'Fecha Fabricación','F. Vto. 1','F. Vto. 2','F. Vto. 3','Mes',
     'Operación','Sellado','Gramaje (g)','Gram. Bloque (g)','Bloques Gastados',
     'Unidades Obtenidas','Lib. Entregadas','Kg. Entregados','Lib. Tajadas',
@@ -3852,8 +3951,8 @@ function generarXLSX(pedidosFiltrados) {
   ];
   const pedidosRows = pedidosFiltrados.map((p, i) => [
     i + 1, p.id, p.estado, p.cliente, p.producto, p.presentacion,
-    p.peso ? parseFloat(p.peso) : '', p.menu, p.operador, p.marca,
-    p.cantidad ? parseFloat(p.cantidad) : '', p.fecha_entrega,
+    p.peso ? parseFloat(p.peso) : '', p.menu, p.operador, p.responsable || '', p.marca,
+    p.cantidad ? parseFloat(p.cantidad) : '', p.fecha_entrega, p.fecha_corte || '',
     p.fecha_fab, p.fecha_vto, p.vto2 || '', p.vto3 || '', p.mes,
     p.operacion, p.sellado,
     p.gramaje ? parseFloat(p.gramaje) : '',
