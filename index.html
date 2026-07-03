@@ -692,7 +692,7 @@ table.data-table {
       <div class="card">
         <div class="card-header">
           <span class="card-title">Información Operativa</span>
-          <span class="card-sub">Identifica quién realiza el pedido — ambos campos obligatorios</span>
+          <span class="card-sub">Trazabilidad de la información</span>
         </div>
         <div class="card-body">
           <div class="form-grid form-grid-2">
@@ -781,15 +781,7 @@ table.data-table {
               <input id="f-operador" placeholder="Nombre">
             </div>
           </div>
-          <div class="form-grid form-grid-3">
-            <div class="field">
-              <label>Fecha fabricación</label>
-              <input id="f-fab" type="date" oninput="autoVto()">
-            </div>
-            <div class="field">
-              <label>L / F. Vto. <span style="color:var(--accent-mid);font-size:10px">AUTO</span></label>
-              <input id="f-vto" type="date">
-            </div>
+          <div class="form-grid form-grid-3 section-gap">
             <div class="field">
               <label>Marca</label>
               <select id="f-marca">
@@ -800,6 +792,28 @@ table.data-table {
                 <option>QUESARTE</option>
               </select>
             </div>
+            <div class="field">
+              <label>Fecha fabricación</label>
+              <input id="f-fab" type="date" oninput="autoVto()">
+            </div>
+            <div class="field">
+              <label>L / F. Vto. <span style="color:var(--accent-mid);font-size:10px">AUTO</span></label>
+              <input id="f-vto" type="date">
+            </div>
+          </div>
+          <div class="form-grid form-grid-3">
+            <div class="field">
+              <label>F/Vto. 2</label>
+              <input id="f-vto2" type="date">
+            </div>
+            <div class="field">
+              <label>F/Vto. 3</label>
+              <input id="f-vto3" type="date">
+            </div>
+            <div class="field">
+              <label>Observaciones</label>
+              <input id="f-obs" placeholder="Notas adicionales">
+            </div>
           </div>
         </div>
       </div>
@@ -807,7 +821,6 @@ table.data-table {
       <div class="card">
         <div class="card-header">
           <span class="card-title">Datos de producción</span>
-          <span class="card-sub">Del seguimiento de corte y empaque</span>
         </div>
         <div class="card-body">
           <div class="form-grid form-grid-4 section-gap">
@@ -890,27 +903,12 @@ table.data-table {
               <input id="f-pct-dif" readonly style="background:var(--surface2);color:var(--text2);font-weight:600;font-family:var(--font-mono,monospace);font-size:13px" placeholder="Calculado">
             </div>
           </div>
-          <div class="form-grid form-grid-3" style="margin-top:14px">
-            <div class="field">
-              <label>F/Vto. 2</label>
-              <input id="f-vto2" type="date">
-            </div>
-            <div class="field">
-              <label>F/Vto. 3</label>
-              <input id="f-vto3" type="date">
-            </div>
-            <div class="field">
-              <label>Observaciones</label>
-              <input id="f-obs" placeholder="Notas adicionales">
-            </div>
-          </div>
         </div>
       </div>
 
       <div class="card">
         <div class="card-header">
           <span class="card-title">Producto empleado</span>
-          <span class="card-sub">Bloques de queso utilizados — pueden ser de distintos tipos, gramajes o lotes</span>
         </div>
         <div class="card-body">
           <div class="cintas-list" id="bloques-container"></div>
@@ -923,7 +921,6 @@ table.data-table {
       <div class="card">
         <div class="card-header">
           <span class="card-title">Día de corte y/o empaque</span>
-          <span class="card-sub">Se agregan conforme se trabaja cada día — el pedido queda abierto para editar</span>
         </div>
         <div class="card-body">
           <div class="cintas-list" id="cintas-container"></div>
@@ -2416,7 +2413,7 @@ function addEditCinta(data) {
   div.className = 'cinta-item';
   div.id = 'ecinta-' + n;
   div.dataset.cintaId = data?.id_cinta || '';
-  div.style.gridTemplateColumns = '28px repeat(7, 1fr) 32px';
+  div.style.gridTemplateColumns = '28px repeat(6, 1fr) 32px';
   div.innerHTML = `
     <div class="cinta-num">${n}</div>
     <div class="field">
