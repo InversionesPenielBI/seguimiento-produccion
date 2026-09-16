@@ -658,7 +658,7 @@ table.data-table {
 
 /* ── Dashboard ── */
 .dash-metrics {
-  display: grid; grid-template-columns: repeat(4, 1fr);
+  display: grid; grid-template-columns: repeat(5, 1fr);
   gap: 18px; margin-bottom: 24px;
 }
 .dash-grid {
@@ -822,6 +822,9 @@ table.data-table {
   .card-body { padding: 22px 22px 24px; }
   .metric-card { padding: 15px 20px 14px; }
   .metric-value { font-size: 22px; }
+}
+@media (max-width: 1400px) {
+  .dash-metrics { grid-template-columns: repeat(4, 1fr); }
 }
 @media (max-width: 1200px) {
   .dash-metrics { grid-template-columns: repeat(2, 1fr); }
@@ -1117,6 +1120,47 @@ input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin
 }
 .th-ordenable:hover .sort-arrow { opacity: .6; }
 .th-ordenable.ordenada .sort-arrow { opacity: 1; }
+
+/* ── Barra de desplazamiento horizontal duplicada encima de la tabla ── */
+.scroll-espejo {
+  overflow-x: auto; overflow-y: hidden;
+  border-radius: var(--radius);
+  background: var(--bg);
+  box-shadow: var(--nm-in-xs);
+  margin: 0 0 6px;
+}
+.scroll-espejo > div { block-size: 1px; }
+
+/* Mas gruesa y con mas contraste en las tablas y en su espejo */
+.scroll-espejo::-webkit-scrollbar,
+.table-wrap::-webkit-scrollbar,
+.dash-card-body::-webkit-scrollbar { height: 16px; width: 16px; }
+.scroll-espejo::-webkit-scrollbar-thumb,
+.table-wrap::-webkit-scrollbar-thumb,
+.dash-card-body::-webkit-scrollbar-thumb {
+  background: var(--accent-mid);
+  border: 4px solid var(--bg);
+  border-radius: var(--pill);
+  box-shadow: none;
+}
+.scroll-espejo::-webkit-scrollbar-thumb:hover,
+.table-wrap::-webkit-scrollbar-thumb:hover,
+.dash-card-body::-webkit-scrollbar-thumb:hover { background: var(--accent); }
+.scroll-espejo, .table-wrap, .dash-card-body {
+  scrollbar-width: auto; scrollbar-color: var(--accent-mid) var(--bg);
+}
+
+/* ── Buscador dentro del encabezado de las tablas del dashboard ── */
+.dash-card-header .tbl-buscar {
+  margin-left: auto;
+  inline-size: 190px; max-inline-size: 45%;
+  padding: 8px 14px; font-size: 12px;
+  border: none; border-radius: var(--radius);
+  background: var(--bg); color: var(--text);
+  box-shadow: var(--nm-in-sm); outline: none;
+}
+.dash-card-header .tbl-buscar:focus { box-shadow: var(--nm-in-sm), 0 0 0 2px var(--accent-soft); }
+.dash-card-header .dash-card-sub { margin-left: 12px; }
 
 /* Campo temporal para escribir un cliente o responsable nuevo */
 .field input.nuevo-valor {
@@ -2879,6 +2923,8 @@ function renderHistorial() {
   const pres     = [...new Set(pedidos.map(p => p.pt_presentacion).filter(Boolean))].sort();
   const sellados = [...new Set(pedidos.map(p => p.pt_sellado).filter(Boolean))].sort();
   const responsables = [...new Set(pedidos.map(p => p.responsable).filter(Boolean))].sort();
+  const operaciones = [...new Set(pedidos.map(p => p.pt_operacion).filter(Boolean))].sort();
+  const semanas = semanasDisponibles(pedidos);
   const estados  = ['ABIERTO', 'CERRADO'];
 
   const filterBar = document.getElementById('hist-filter-bar');
@@ -2906,11 +2952,15 @@ function renderHistorial() {
     filterBar._msProducto     = buildMultiSelect('Producto', prods, histFiltros.productos, applyHistFilters);
     filterBar._msPresentacion = buildMultiSelect('Presentación', pres, histFiltros.presentaciones, applyHistFilters);
     filterBar._msSellado      = buildMultiSelect('Sellado', sellados, histFiltros.sellados, applyHistFilters);
+    filterBar._msOperacion    = buildMultiSelect('Operación', operaciones, histFiltros.operaciones, applyHistFilters);
     filterBar._msEstado       = buildMultiSelect('Estado', estados, histFiltros.estados, applyHistFilters);
     [filterBar._msCliente, filterBar._msProducto, filterBar._msPresentacion,
-     filterBar._msSellado, filterBar._msEstado].forEach(el => fila1.appendChild(el));
+     filterBar._msSellado, filterBar._msOperacion, filterBar._msEstado].forEach(el => fila1.appendChild(el));
 
     // ── Fila inferior ──
+    filterBar._msSemana = buildMultiSelect('Semana', semanas, histFiltros.semanas, applyHistFilters);
+    fila2.appendChild(filterBar._msSemana);
+
     const corteWrap = document.createElement('div');
     corteWrap.className = 'date-range-wrap';
     corteWrap.innerHTML = `
@@ -2943,6 +2993,7 @@ function renderHistorial() {
     btnLimpiar.addEventListener('click', () => {
       histFiltros.clientes = []; histFiltros.productos = []; histFiltros.presentaciones = [];
       histFiltros.sellados = []; histFiltros.estados = []; histFiltros.responsables = [];
+      histFiltros.operaciones = []; histFiltros.semanas = [];
       histFiltros.fechaDesde = ''; histFiltros.fechaHasta = ''; histFiltros.buscar = '';
       histFiltros.fechaCorteDesde = ''; histFiltros.fechaCorteHasta = '';
       limpiarOrdenColumna('hist');
@@ -2955,6 +3006,8 @@ function renderHistorial() {
     filterBar._msProducto?.updateOptions(prods);
     filterBar._msPresentacion?.updateOptions(pres);
     filterBar._msSellado?.updateOptions(sellados);
+    filterBar._msOperacion?.updateOptions(operaciones);
+    filterBar._msSemana?.updateOptions(semanas);
     filterBar._msResponsable?.updateOptions(responsables);
   }
 
@@ -3011,6 +3064,84 @@ function prepararOrden(selectorTabla, clave, render) {
 
 const num = v => parseFloat(v) || 0;
 
+// ═══════════════════════════════════════════════════════════
+// SEMANA JULIANA
+// Misma convención que WEEKNUM de Excel (tipo 1): las semanas van
+// de domingo a sábado y la semana 1 es la que contiene el 1 de enero.
+// Se calcula siempre sobre la FECHA DE CORTE.
+// ═══════════════════════════════════════════════════════════
+function semanaJulianaNum(fechaISO) {
+  if (!fechaISO || fechaISO.length < 10) return 0;
+  const d = new Date(fechaISO + 'T12:00:00');
+  if (isNaN(d.getTime())) return 0;
+  const ene1 = new Date(d.getFullYear(), 0, 1, 12);
+  const diaDelAnio = Math.round((d - ene1) / 86400000) + 1;
+  return Math.floor((diaDelAnio + ene1.getDay() - 1) / 7) + 1;
+}
+
+// Etiqueta ordenable alfabéticamente: 2026-S01
+function semanaJuliana(fechaISO) {
+  const n = semanaJulianaNum(fechaISO);
+  return n ? `${fechaISO.slice(0, 4)}-S${String(n).padStart(2, '0')}` : '';
+}
+
+// Lista de semanas presentes en los pedidos, de la más reciente a la más antigua
+function semanasDisponibles(lista) {
+  return [...new Set(lista.map(p => semanaJuliana(p.fecha_corte)).filter(Boolean))].sort().reverse();
+}
+
+// "2026-01 Q1" → "2026-01 Q1 (S01–S03)": las semanas julianas que cubre la quincena
+function etiquetaQuincena(clave) {
+  const m = /^(\d{4})-(\d{2}) (Q1|Q2)$/.exec(clave);
+  if (!m) return clave;
+  const anio = m[1], mes = m[2], q = m[3];
+  const ultimoDia = new Date(Number(anio), Number(mes), 0).getDate();
+  const desde = q === 'Q1' ? '01' : '16';
+  const hasta = q === 'Q1' ? '15' : String(ultimoDia).padStart(2, '0');
+  const a = semanaJulianaNum(`${anio}-${mes}-${desde}`);
+  const b = semanaJulianaNum(`${anio}-${mes}-${hasta}`);
+  if (!a || !b) return clave;
+  const S = n => 'S' + String(n).padStart(2, '0');
+  return `${clave} (${a === b ? S(a) : S(a) + '–' + S(b)})`;
+}
+
+// ═══════════════════════════════════════════════════════════
+// SCROLL HORIZONTAL DUPLICADO ARRIBA DE LA TABLA
+// Inserta una barra gemela justo encima del contenedor y mantiene
+// las dos sincronizadas en ambos sentidos.
+// ═══════════════════════════════════════════════════════════
+function espejarScroll(wrap) {
+  if (!wrap || !wrap.parentNode) return;
+  let esp = wrap.previousElementSibling;
+  if (!esp || !esp.classList || !esp.classList.contains('scroll-espejo')) {
+    esp = document.createElement('div');
+    esp.className = 'scroll-espejo';
+    esp.innerHTML = '<div></div>';
+    wrap.parentNode.insertBefore(esp, wrap);
+    esp.addEventListener('scroll', () => {
+      if (wrap._sync) return;
+      esp._sync = true; wrap.scrollLeft = esp.scrollLeft; esp._sync = false;
+    });
+    wrap.addEventListener('scroll', () => {
+      if (esp._sync) return;
+      wrap._sync = true; esp.scrollLeft = wrap.scrollLeft; wrap._sync = false;
+    });
+  }
+  const ancho = wrap.scrollWidth;
+  esp.firstElementChild.style.width = ancho + 'px';
+  esp.style.display = ancho > wrap.clientWidth + 1 ? '' : 'none';
+  // Si el navegador usa barras superpuestas no ocupan alto: se reserva a mano
+  // para que la barra de arriba siempre se pueda ver y arrastrar.
+  esp.style.blockSize = '';
+  if (esp.offsetHeight - esp.clientHeight === 0) esp.style.blockSize = '14px';
+  esp.scrollLeft = wrap.scrollLeft;
+}
+
+function espejarScrollTodos(selector) {
+  requestAnimationFrame(() => document.querySelectorAll(selector).forEach(espejarScroll));
+}
+window.addEventListener('resize', () => espejarScrollTodos('.table-wrap'));
+
 // Abre/cierra el desglose de códigos de una fila del historial
 function toggleTrazas(id, btn) {
   const fila = document.getElementById('det-' + id);
@@ -3029,6 +3160,8 @@ function applyHistFilters() {
     if (histFiltros.sellados.length       && !histFiltros.sellados.includes(p.pt_sellado))            return false;
     if (histFiltros.estados.length        && !histFiltros.estados.includes(p.estado))                 return false;
     if (histFiltros.responsables.length   && !histFiltros.responsables.includes(p.responsable))       return false;
+    if (histFiltros.operaciones.length    && !histFiltros.operaciones.includes(p.pt_operacion))       return false;
+    if (histFiltros.semanas.length        && !histFiltros.semanas.includes(semanaJuliana(p.fecha_corte))) return false;
     if (histFiltros.fechaDesde && (p.fecha_entrega||'') < histFiltros.fechaDesde) return false;
     if (histFiltros.fechaHasta && (p.fecha_entrega||'') > histFiltros.fechaHasta) return false;
     if (histFiltros.fechaCorteDesde && (p.fecha_corte||'') < histFiltros.fechaCorteDesde) return false;
@@ -3099,6 +3232,7 @@ function applyHistFilters() {
   const tbody = document.getElementById('hist-body');
   if (!fil.length) {
     tbody.innerHTML = `<tr><td colspan="20" class="empty-state"><div class="empty-state-text">No hay registros con estos filtros</div></td></tr>`;
+    espejarScrollTodos('#view-historial .table-wrap');
     return;
   }
 
@@ -3192,7 +3326,7 @@ function applyHistFilters() {
         <td style="text-align:right">${fNum(kgEnt)}</td>
         <td style="text-align:right">${fNum(lbTaj)}</td>
         <td style="text-align:right;${retal>0?'color:var(--danger);font-weight:600':'color:var(--text3)'}">
-          ${retal>0 ? fmtNum(retal,2) : '—'}
+          ${retal>0 ? fmtNum(retal * LB_TO_KG, 2) : '—'}
         </td>
         <td style="text-align:right;${pctRetal>0?'color:var(--danger)':''}">${pctRetal ? fmtNum(pctRetal,2)+'%' : '—'}</td>
         <td style="text-align:right">${dif ? fmtNum(dif,2) : '—'}</td>
@@ -3209,6 +3343,8 @@ function applyHistFilters() {
       </tr>
       ${filaDetalle}`;
   }).join('');
+
+  espejarScrollTodos('#view-historial .table-wrap');
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -3916,7 +4052,7 @@ function buildMultiSelect(placeholder, options, selected, onChange) {
 // ═══════════════════════════════════════════════════════════
 // RESUMEN
 // ═══════════════════════════════════════════════════════════
-let resumenFiltros = { clientes: [], productos: [], presentaciones: [], sellados: [], estados: [], responsables: [], buscar: '', fechaDesde: '', fechaHasta: '', fechaCorteDesde: '', fechaCorteHasta: '' };
+let resumenFiltros = { clientes: [], productos: [], presentaciones: [], sellados: [], estados: [], responsables: [], operaciones: [], semanas: [], buscar: '', fechaDesde: '', fechaHasta: '', fechaCorteDesde: '', fechaCorteHasta: '' };
 
 function renderResumen() {
   const cont = document.getElementById('resumen-content');
@@ -3930,6 +4066,8 @@ function renderResumen() {
 
   const sellados     = [...new Set(pedidos.map(p => p.pt_sellado).filter(Boolean))].sort();
   const responsables = [...new Set(pedidos.map(p => p.responsable).filter(Boolean))].sort();
+  const operaciones  = [...new Set(pedidos.map(p => p.pt_operacion).filter(Boolean))].sort();
+  const semanas      = semanasDisponibles(pedidos);
   const estados      = ['ABIERTO', 'CERRADO'];
 
   const fb = document.getElementById('resumen-filter-bar');
@@ -3955,9 +4093,13 @@ function renderResumen() {
     fb._msProducto     = buildMultiSelect('Producto',     prods,        resumenFiltros.productos,      applyResumenFilters);
     fb._msPresentacion = buildMultiSelect('Presentación', pres,         resumenFiltros.presentaciones, applyResumenFilters);
     fb._msSellado      = buildMultiSelect('Sellado',      sellados,     resumenFiltros.sellados,       applyResumenFilters);
+    fb._msOperacion    = buildMultiSelect('Operación',    operaciones,  resumenFiltros.operaciones,    applyResumenFilters);
     fb._msEstado       = buildMultiSelect('Estado',       estados,      resumenFiltros.estados,        applyResumenFilters);
-    [fb._msCliente, fb._msProducto, fb._msPresentacion, fb._msSellado, fb._msEstado]
+    [fb._msCliente, fb._msProducto, fb._msPresentacion, fb._msSellado, fb._msOperacion, fb._msEstado]
       .forEach(el => fila1.appendChild(el));
+
+    fb._msSemana = buildMultiSelect('Semana', semanas, resumenFiltros.semanas, applyResumenFilters);
+    fila2.appendChild(fb._msSemana);
 
     const corteWrap = document.createElement('div');
     corteWrap.className = 'date-range-wrap';
@@ -3991,6 +4133,7 @@ function renderResumen() {
     btnLimpiar.addEventListener('click', () => {
       resumenFiltros.clientes = []; resumenFiltros.productos = []; resumenFiltros.presentaciones = [];
       resumenFiltros.sellados = []; resumenFiltros.estados = []; resumenFiltros.responsables = [];
+      resumenFiltros.operaciones = []; resumenFiltros.semanas = [];
       resumenFiltros.buscar = '';
       resumenFiltros.fechaDesde = ''; resumenFiltros.fechaHasta = '';
       resumenFiltros.fechaCorteDesde = ''; resumenFiltros.fechaCorteHasta = '';
@@ -4010,6 +4153,8 @@ function renderResumen() {
     fb._msProducto?.updateOptions(prods);
     fb._msPresentacion?.updateOptions(pres);
     fb._msSellado?.updateOptions(sellados);
+    fb._msOperacion?.updateOptions(operaciones);
+    fb._msSemana?.updateOptions(semanas);
     fb._msResponsable?.updateOptions(responsables);
   }
 
@@ -4040,6 +4185,8 @@ function applyResumenFilters() {
     if (resumenFiltros.sellados.length     && !resumenFiltros.sellados.includes(p.pt_sellado))       return false;
     if (resumenFiltros.estados.length      && !resumenFiltros.estados.includes(p.estado))            return false;
     if (resumenFiltros.responsables.length && !resumenFiltros.responsables.includes(p.responsable))  return false;
+    if (resumenFiltros.operaciones.length  && !resumenFiltros.operaciones.includes(p.pt_operacion))  return false;
+    if (resumenFiltros.semanas.length      && !resumenFiltros.semanas.includes(semanaJuliana(p.fecha_corte))) return false;
     if (resumenFiltros.buscar && !`${p.cliente} ${p.pt_tipo_producto} ${p.pt_codigo_trazabilidad} ${p.id}`
         .toLowerCase().includes(resumenFiltros.buscar.toLowerCase())) return false;
     if (resumenFiltros.fechaDesde && (p.fecha_entrega||'') < resumenFiltros.fechaDesde) return false;
@@ -4118,14 +4265,15 @@ function applyResumenFilters() {
       </div>`).join('');
 
   prepararOrden('#view-resumen .data-table', 'resumen', applyResumenFilters);
+  espejarScrollTodos('#view-resumen .table-wrap');
 }
 
 // ═══════════════════════════════════════════════════════════
 // DASHBOARD
 // ═══════════════════════════════════════════════════════════
 const dashCharts = {};
-let dashFiltros = { anios: [], meses: [], clientes: [], productos: [], presentaciones: [], sellados: [], estados: [], responsables: [], buscar: '', fechaDesde: '', fechaHasta: '', fechaCorteDesde: '', fechaCorteHasta: '' };
-let histFiltros  = { clientes: [], productos: [], presentaciones: [], sellados: [], estados: [], responsables: [], fechaDesde: '', fechaHasta: '', buscar: '', fechaCorteDesde: '', fechaCorteHasta: '' };
+let dashFiltros = { anios: [], meses: [], clientes: [], productos: [], presentaciones: [], sellados: [], estados: [], responsables: [], operaciones: [], semanas: [], buscar: '', fechaDesde: '', fechaHasta: '', fechaCorteDesde: '', fechaCorteHasta: '' };
+let histFiltros  = { clientes: [], productos: [], presentaciones: [], sellados: [], estados: [], responsables: [], operaciones: [], semanas: [], fechaDesde: '', fechaHasta: '', buscar: '', fechaCorteDesde: '', fechaCorteHasta: '' };
 
 const LB_TO_KG = 0.5;
 
@@ -4206,10 +4354,10 @@ function renderDashboard() {
         </div>
         <div class="dash-card">
           <div class="dash-card-header">
-            <span class="dash-card-title">Kilos entregados por cliente</span>
-            <span class="dash-card-sub">producto terminado</span>
+            <span class="dash-card-title">% de diferencia por semana juliana</span>
+            <span class="dash-card-sub">semana de la fecha de corte · domingo a sábado</span>
           </div>
-          <div class="dash-card-body"><div class="chart-wrap"><canvas id="ch-entregas-cli"></canvas></div></div>
+          <div class="dash-card-body"><div class="chart-wrap"><canvas id="ch-pct-semana"></canvas></div></div>
         </div>
       </div>
 
@@ -4217,7 +4365,7 @@ function renderDashboard() {
         <div class="dash-card">
           <div class="dash-card-header">
             <span class="dash-card-title">Evolución por quincena</span>
-            <span class="dash-card-sub">Q1: días 1-15 · Q2: día 16 al fin de mes</span>
+            <span class="dash-card-sub">por fecha de corte · Q1: días 1-15 · Q2: día 16 al fin de mes</span>
           </div>
           <div class="dash-card-body"><div class="chart-wrap"><canvas id="ch-evolucion"></canvas></div></div>
         </div>
@@ -4234,7 +4382,8 @@ function renderDashboard() {
         <div class="dash-card">
           <div class="dash-card-header">
             <span class="dash-card-title">Detalle por producto</span>
-            <span class="dash-card-sub">unidades, retal y participación</span>
+            <span class="dash-card-sub">por presentación</span>
+            <input class="tbl-buscar" id="busca-prod" type="text" placeholder="Buscar…">
           </div>
           <div class="dash-card-body" style="overflow:auto">
             <table class="dash-table" id="tbl-prod"></table>
@@ -4244,6 +4393,7 @@ function renderDashboard() {
           <div class="dash-card-header">
             <span class="dash-card-title">Detalle por cliente</span>
             <span class="dash-card-sub">pedidos y kilos entregados</span>
+            <input class="tbl-buscar" id="busca-cli" type="text" placeholder="Buscar…">
           </div>
           <div class="dash-card-body" style="overflow:auto">
             <table class="dash-table" id="tbl-cli"></table>
@@ -4256,12 +4406,24 @@ function renderDashboard() {
           <div class="dash-card-header">
             <span class="dash-card-title">Resumen por mes, producto, sellado y presentación</span>
             <span class="dash-card-sub">cantidad obtenida, kilos entregados y % de retal del grupo</span>
+            <input class="tbl-buscar" id="busca-resumen" type="text" placeholder="Buscar…">
           </div>
           <div class="dash-card-body" style="overflow:auto">
             <table class="dash-table" id="tbl-resumen"></table>
           </div>
         </div>
       </div>`;
+
+    // Buscadores de cada tabla: solo repintan su propia tabla
+    const engancharBusca = (id, clave, pintar) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.value = dashBusca[clave];
+      el.addEventListener('input', () => { dashBusca[clave] = el.value; pintar(); });
+    };
+    engancharBusca('busca-prod',    'prod',    pintarTablaProd);
+    engancharBusca('busca-cli',     'cli',     pintarTablaCli);
+    engancharBusca('busca-resumen', 'resumen', pintarTablaResumen);
   }
 
   // ── Filtros: los mismos de Historial diario ──
@@ -4270,9 +4432,12 @@ function renderDashboard() {
   const pres         = [...new Set(pedidos.map(p => p.pt_presentacion).filter(Boolean))].sort();
   const sellados     = [...new Set(pedidos.map(p => p.pt_sellado).filter(Boolean))].sort();
   const responsables = [...new Set(pedidos.map(p => p.responsable).filter(Boolean))].sort();
+  const operaciones  = [...new Set(pedidos.map(p => p.pt_operacion).filter(Boolean))].sort();
+  const semanas      = semanasDisponibles(pedidos);
   const estados      = ['ABIERTO', 'CERRADO'];
-  const anios        = [...new Set(pedidos.map(p => p.fecha_entrega?.slice(0,4)).filter(Boolean))].sort().reverse();
-  const meses        = [...new Set(pedidos.map(p => p.fecha_entrega?.slice(0,7)).filter(Boolean))].sort().reverse();
+  // Año y mes se toman de la FECHA DE CORTE
+  const anios        = [...new Set(pedidos.map(p => p.fecha_corte?.slice(0,4)).filter(Boolean))].sort().reverse();
+  const meses        = [...new Set(pedidos.map(p => p.fecha_corte?.slice(0,7)).filter(Boolean))].sort().reverse();
 
   const dfb = document.getElementById('dash-filter-bar');
   if (!dfb._built) {
@@ -4297,14 +4462,17 @@ function renderDashboard() {
     dfb._msProducto     = buildMultiSelect('Producto',     prods,    dashFiltros.productos,      applyDashFilters);
     dfb._msPresentacion = buildMultiSelect('Presentación', pres,     dashFiltros.presentaciones, applyDashFilters);
     dfb._msSellado      = buildMultiSelect('Sellado',      sellados, dashFiltros.sellados,       applyDashFilters);
+    dfb._msOperacion    = buildMultiSelect('Operación',    operaciones, dashFiltros.operaciones,  applyDashFilters);
     dfb._msEstado       = buildMultiSelect('Estado',       estados,  dashFiltros.estados,        applyDashFilters);
-    [dfb._msCliente, dfb._msProducto, dfb._msPresentacion, dfb._msSellado, dfb._msEstado]
+    [dfb._msCliente, dfb._msProducto, dfb._msPresentacion, dfb._msSellado, dfb._msOperacion, dfb._msEstado]
       .forEach(el => fila1.appendChild(el));
 
-    dfb._msAnio = buildMultiSelect('Año', anios, dashFiltros.anios, applyDashFilters);
-    dfb._msMes  = buildMultiSelect('Mes',  meses, dashFiltros.meses, applyDashFilters);
+    dfb._msAnio   = buildMultiSelect('Año',    anios,   dashFiltros.anios,   applyDashFilters);
+    dfb._msMes    = buildMultiSelect('Mes',    meses,   dashFiltros.meses,   applyDashFilters);
+    dfb._msSemana = buildMultiSelect('Semana', semanas, dashFiltros.semanas, applyDashFilters);
     fila2.appendChild(dfb._msAnio);
     fila2.appendChild(dfb._msMes);
+    fila2.appendChild(dfb._msSemana);
 
     const corteWrap = document.createElement('div');
     corteWrap.className = 'date-range-wrap';
@@ -4349,13 +4517,17 @@ function renderDashboard() {
     dfb._msProducto?.updateOptions(prods);
     dfb._msPresentacion?.updateOptions(pres);
     dfb._msSellado?.updateOptions(sellados);
+    dfb._msOperacion?.updateOptions(operaciones);
+    dfb._msSemana?.updateOptions(semanas);
     dfb._msResponsable?.updateOptions(responsables);
   }
 
   // ── Filtrado ──
   const fil = pedidos.filter(p => {
-    if (dashFiltros.anios.length  && !dashFiltros.anios.some(a => (p.fecha_entrega||'').startsWith(a)))  return false;
-    if (dashFiltros.meses.length  && !dashFiltros.meses.some(m => (p.fecha_entrega||'').startsWith(m)))  return false;
+    if (dashFiltros.anios.length  && !dashFiltros.anios.some(a => (p.fecha_corte||'').startsWith(a)))  return false;
+    if (dashFiltros.meses.length  && !dashFiltros.meses.some(m => (p.fecha_corte||'').startsWith(m)))  return false;
+    if (dashFiltros.semanas.length && !dashFiltros.semanas.includes(semanaJuliana(p.fecha_corte)))     return false;
+    if (dashFiltros.operaciones.length    && !dashFiltros.operaciones.includes(p.pt_operacion))        return false;
     if (dashFiltros.clientes.length       && !dashFiltros.clientes.includes(p.cliente))              return false;
     if (dashFiltros.productos.length      && !dashFiltros.productos.includes(p.pt_tipo_producto))     return false;
     if (dashFiltros.presentaciones.length && !dashFiltros.presentaciones.includes(p.pt_presentacion)) return false;
@@ -4383,6 +4555,9 @@ function renderDashboard() {
   const abiertos   = fil.filter(p => p.estado === 'ABIERTO').length;
   const nClientes  = new Set(fil.map(p => p.cliente).filter(Boolean)).size;
   const pctRetal   = librasTaj > 0 ? (librasRet / librasTaj) * 100 : 0;
+  // Balance de material del grupo: tajado − entregado − retal
+  const diferencia = librasTaj > 0 ? librasTaj - librasEnt - librasRet : 0;
+  const pctDif     = librasTaj > 0 ? (diferencia / librasTaj) * 100 : 0;
 
   document.getElementById('dash-metrics').innerHTML = `
     <div class="metric-card">
@@ -4396,9 +4571,14 @@ function renderDashboard() {
       <div class="metric-sub">unidades</div>
     </div>
     <div class="metric-card">
-      <div class="metric-label">Kilos empacados</div>
+      <div class="metric-label">Kilos entregados</div>
       <div class="metric-value">${fmtNum(librasEnt * LB_TO_KG, 1)}</div>
       <div class="metric-sub">${fmtNum(librasEnt, 1)} lb</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">Kilos tajados</div>
+      <div class="metric-value">${fmtNum(librasTaj * LB_TO_KG, 1)}</div>
+      <div class="metric-sub">${fmtNum(librasTaj, 1)} lb</div>
     </div>
     <div class="metric-card">
       <div class="metric-label">Retal total (kg)</div>
@@ -4411,9 +4591,14 @@ function renderDashboard() {
       <div class="metric-sub">sobre kilos tajados</div>
     </div>
     <div class="metric-card">
-      <div class="metric-label">Kilos tajados</div>
-      <div class="metric-value">${fmtNum(librasTaj * LB_TO_KG, 1)}</div>
-      <div class="metric-sub">${fmtNum(librasTaj, 1)} lb</div>
+      <div class="metric-label">Diferencia</div>
+      <div class="metric-value" style="color:${Math.abs(pctDif) > 1 ? 'var(--danger)' : 'var(--accent)'}">${fmtNum(diferencia * LB_TO_KG, 1)}</div>
+      <div class="metric-sub">kg · ${fmtNum(diferencia, 1)} lb</div>
+    </div>
+    <div class="metric-card">
+      <div class="metric-label">% Diferencia</div>
+      <div class="metric-value" style="color:${Math.abs(pctDif) > 1 ? 'var(--danger)' : 'var(--accent)'}">${fmtNum(pctDif, 2)}%</div>
+      <div class="metric-sub">sobre kilos tajados</div>
     </div>
     <div class="metric-card">
       <div class="metric-label">Cantidad sobrante</div>
@@ -4497,22 +4682,39 @@ function renderDashboard() {
     options: chartBaseOptions({ horizontal: true, suffix: ' kg' })
   });
 
-  // ── Kilos entregados por cliente (barras verticales) ──
-  destruirChart('ch-entregas-cli');
-  dashCharts['ch-entregas-cli'] = new Chart(document.getElementById('ch-entregas-cli'), {
+  // ── % de diferencia por semana juliana (sobre la fecha de corte) ──
+  const porSemana = {};
+  fil.forEach(p => {
+    const k = semanaJuliana(p.fecha_corte);
+    if (!k) return;
+    if (!porSemana[k]) porSemana[k] = { k, librasEnt: 0, librasRetal: 0, librasTaj: 0 };
+    porSemana[k].librasEnt   += num(p.pt_libras_entregadas);
+    porSemana[k].librasRetal += num(p.pt_retal_lb);
+    porSemana[k].librasTaj   += num(p.mp_libras_tajadas);
+  });
+  const semanasOrden = Object.values(porSemana)
+    .sort((a, b) => a.k.localeCompare(b.k))
+    .map(s => ({
+      k: s.k,
+      pct: s.librasTaj > 0 ? ((s.librasTaj - s.librasEnt - s.librasRetal) / s.librasTaj) * 100 : 0
+    }));
+
+  destruirChart('ch-pct-semana');
+  dashCharts['ch-pct-semana'] = new Chart(document.getElementById('ch-pct-semana'), {
     type: 'bar',
     data: {
-      labels: porCliente.map(r => clienteCorto(r.k)),
-      datasets: [{ label: 'Kilos entregados', data: porCliente.map(r => +(r.librasEnt * LB_TO_KG).toFixed(2)),
-                   backgroundColor: '#2d5a7b', borderRadius: 4 }]
+      labels: semanasOrden.map(s => s.k),
+      datasets: [{ label: '% Diferencia', data: semanasOrden.map(s => +s.pct.toFixed(2)),
+                   backgroundColor: semanasOrden.map(s => Math.abs(s.pct) > 1 ? '#9B2335' : '#2d5a7b'),
+                   borderRadius: 4 }]
     },
-    options: chartBaseOptions({ suffix: ' kg' })
+    options: chartBaseOptions({ suffix: '%' })
   });
 
-  // ── Evolución por quincena ──
+  // ── Evolución por quincena (sobre la fecha de corte) ──
   const porQuincena = {};
   fil.forEach(p => {
-    const f = p.fecha_entrega || '';
+    const f = p.fecha_corte || '';
     if (f.length < 10) return;
     const dia = parseInt(f.slice(8, 10), 10);
     const k = `${f.slice(0,7)} ${dia <= 15 ? 'Q1' : 'Q2'}`;
@@ -4526,7 +4728,7 @@ function renderDashboard() {
   dashCharts['ch-evolucion'] = new Chart(document.getElementById('ch-evolucion'), {
     type: 'line',
     data: {
-      labels: quincenas.map(q => q.k),
+      labels: quincenas.map(q => etiquetaQuincena(q.k)),
       datasets: [
         { label: 'Kilos entregados', data: quincenas.map(q => +q.kilosEnt.toFixed(2)),
           borderColor: '#2d5a7b', backgroundColor: '#2d5a7b33', tension: .3, fill: true },
@@ -4552,38 +4754,27 @@ function renderDashboard() {
     options: chartBaseOptions({ horizontal: true, suffix: '%' })
   });
 
-  // ── Tabla: detalle por producto ──
-  document.getElementById('tbl-prod').innerHTML = `
-    <thead><tr>
-      <th>Producto</th><th class="num">Pedidos</th><th class="num">Unidades</th>
-      <th class="num">Retal (kg)</th><th class="num">% Retal</th>
-    </tr></thead>
-    <tbody>${porProducto.map(r => `<tr>
-      <td title="${esc(r.k)}"><strong>${esc(nombreCorto(r.k))}</strong></td>
-      <td class="num">${r.pedidos}</td>
-      <td class="num">${r.unidades.toLocaleString('es-CO')}</td>
-      <td class="num" style="${r.librasRetal>0?'color:var(--danger)':''}">${fmtNum(r.librasRetal * LB_TO_KG, 2)}</td>
-      <td class="num">${r.librasTaj>0?fmtNum((r.librasRetal/r.librasTaj)*100,2)+'%':'—'}</td>
-    </tr>`).join('')}</tbody>`;
+  // ── Datos de las tablas (se pintan aparte: tienen buscador y orden propio) ──
 
-  // ── Tabla: detalle por cliente (nombre completo) ──
-  document.getElementById('tbl-cli').innerHTML = `
-    <thead><tr>
-      <th>Cliente</th><th class="num">Pedidos</th>
-      <th class="num">Unidades</th><th class="num">Kilos ent.</th><th class="num">Retal (kg)</th>
-    </tr></thead>
-    <tbody>${porCliente.map(r => `<tr>
-      <td><strong>${esc(r.k)}</strong></td>
-      <td class="num">${r.pedidos}</td>
-      <td class="num">${r.unidades.toLocaleString('es-CO')}</td>
-      <td class="num">${fmtNum(r.librasEnt * LB_TO_KG, 2)}</td>
-      <td class="num" style="${r.librasRetal>0?'color:var(--danger)':''}">${fmtNum(r.librasRetal * LB_TO_KG, 2)}</td>
-    </tr>`).join('')}</tbody>`;
+  // Detalle por producto, ahora abierto por presentación
+  const mapaProdPres = {};
+  fil.forEach(p => {
+    const producto = p.pt_tipo_producto || '(SIN DATO)';
+    const presentacion = p.pt_presentacion || '—';
+    const k = producto + '||' + presentacion;
+    if (!mapaProdPres[k]) mapaProdPres[k] =
+      { producto, presentacion, pedidos: 0, unidades: 0, librasRetal: 0, librasTaj: 0 };
+    const r = mapaProdPres[k];
+    r.pedidos++;
+    r.unidades    += num(p.pt_cantidad_obtenida);
+    r.librasRetal += num(p.pt_retal_lb);
+    r.librasTaj   += num(p.mp_libras_tajadas);
+  });
 
-  // ── Tabla: mes · producto · sellado · presentación ──
+  // Resumen: mes · producto · sellado · presentación
   const resumen = {};
   fil.forEach(p => {
-    const mes = (p.fecha_entrega || '').slice(0, 7) || '(SIN FECHA)';
+    const mes = (p.fecha_corte || '').slice(0, 7) || '(SIN FECHA)';
     const k = [mes, p.pt_tipo_producto, p.pt_sellado, p.pt_presentacion].join('||');
     if (!resumen[k]) resumen[k] = {
       mes, producto: p.pt_tipo_producto || '—', sellado: p.pt_sellado || '—',
@@ -4595,15 +4786,116 @@ function renderDashboard() {
     resumen[k].librasRetal += num(p.pt_retal_lb);
     resumen[k].librasTaj   += num(p.mp_libras_tajadas);
   });
-  const resArr = Object.values(resumen).sort((a,b) =>
+
+  dashDatos.prod    = Object.values(mapaProdPres).sort((a,b) => b.librasRetal - a.librasRetal);
+  dashDatos.cli     = porCliente;
+  dashDatos.resumen = Object.values(resumen).sort((a,b) =>
     b.mes.localeCompare(a.mes) || a.producto.localeCompare(b.producto) || a.sellado.localeCompare(b.sellado));
 
-  document.getElementById('tbl-resumen').innerHTML = `
+  pintarTablaProd();
+  pintarTablaCli();
+  pintarTablaResumen();
+}
+
+// ═══════════════════════════════════════════════════════════
+// TABLAS DEL DASHBOARD
+// Cada una tiene su propia caja de búsqueda y se ordena al hacer
+// clic en cualquier encabezado, sin repintar los gráficos.
+// ═══════════════════════════════════════════════════════════
+const dashBusca = { prod: '', cli: '', resumen: '' };
+const dashDatos = { prod: [], cli: [], resumen: [] };
+
+const coincideTexto = (texto, q) => !q || String(texto).toLowerCase().includes(q.toLowerCase());
+const vacio = n => `<tr><td colspan="${n}" class="empty-state"><div class="empty-state-text">Sin datos con estos filtros</div></td></tr>`;
+
+function pintarTablaProd() {
+  const el = document.getElementById('tbl-prod');
+  if (!el) return;
+  const filas = aplicarOrden(
+    dashDatos.prod.filter(r => coincideTexto(`${r.producto} ${r.presentacion}`, dashBusca.prod)),
+    'dprod', {
+      producto:     r => r.producto,
+      presentacion: r => r.presentacion,
+      pedidos:      r => r.pedidos,
+      unidades:     r => r.unidades,
+      retal:        r => r.librasRetal,
+      pctRetal:     r => r.librasTaj > 0 ? r.librasRetal / r.librasTaj : 0,
+    });
+  el.innerHTML = `
     <thead><tr>
-      <th>Mes</th><th>Producto</th><th>Tipo de sellado</th><th>Presentación</th>
-      <th class="num">Cantidad obtenida</th><th class="num">Kilos entregados</th><th class="num">% Retal</th>
+      <th data-orden="producto">Producto</th>
+      <th data-orden="presentacion">Presentación</th>
+      <th data-orden="pedidos" class="num">Pedidos</th>
+      <th data-orden="unidades" class="num">Unidades</th>
+      <th data-orden="retal" class="num">Retal (kg)</th>
+      <th data-orden="pctRetal" class="num">% Retal</th>
     </tr></thead>
-    <tbody>${resArr.length ? resArr.map(r => `<tr>
+    <tbody>${filas.length ? filas.map(r => `<tr>
+      <td title="${esc(r.producto)}"><strong>${esc(nombreCorto(r.producto))}</strong></td>
+      <td><span class="${presClase(r.presentacion)}">${esc(r.presentacion)}</span></td>
+      <td class="num">${r.pedidos}</td>
+      <td class="num">${r.unidades.toLocaleString('es-CO')}</td>
+      <td class="num" style="${r.librasRetal>0?'color:var(--danger)':''}">${fmtNum(r.librasRetal * LB_TO_KG, 2)}</td>
+      <td class="num">${r.librasTaj>0?fmtNum((r.librasRetal/r.librasTaj)*100,2)+'%':'—'}</td>
+    </tr>`).join('') : vacio(6)}</tbody>`;
+  prepararOrden('#tbl-prod', 'dprod', pintarTablaProd);
+}
+
+function pintarTablaCli() {
+  const el = document.getElementById('tbl-cli');
+  if (!el) return;
+  const filas = aplicarOrden(
+    dashDatos.cli.filter(r => coincideTexto(r.k, dashBusca.cli)),
+    'dcli', {
+      cliente:   r => r.k,
+      pedidos:   r => r.pedidos,
+      unidades:  r => r.unidades,
+      kilosEnt:  r => r.librasEnt,
+      retal:     r => r.librasRetal,
+    });
+  el.innerHTML = `
+    <thead><tr>
+      <th data-orden="cliente">Cliente</th>
+      <th data-orden="pedidos" class="num">Pedidos</th>
+      <th data-orden="unidades" class="num">Unidades</th>
+      <th data-orden="kilosEnt" class="num">Kilos ent.</th>
+      <th data-orden="retal" class="num">Retal (kg)</th>
+    </tr></thead>
+    <tbody>${filas.length ? filas.map(r => `<tr>
+      <td><strong>${esc(r.k)}</strong></td>
+      <td class="num">${r.pedidos}</td>
+      <td class="num">${r.unidades.toLocaleString('es-CO')}</td>
+      <td class="num">${fmtNum(r.librasEnt * LB_TO_KG, 2)}</td>
+      <td class="num" style="${r.librasRetal>0?'color:var(--danger)':''}">${fmtNum(r.librasRetal * LB_TO_KG, 2)}</td>
+    </tr>`).join('') : vacio(5)}</tbody>`;
+  prepararOrden('#tbl-cli', 'dcli', pintarTablaCli);
+}
+
+function pintarTablaResumen() {
+  const el = document.getElementById('tbl-resumen');
+  if (!el) return;
+  const filas = aplicarOrden(
+    dashDatos.resumen.filter(r => coincideTexto(`${r.mes} ${r.producto} ${r.sellado} ${r.presentacion}`, dashBusca.resumen)),
+    'dres', {
+      mes:          r => r.mes,
+      producto:     r => r.producto,
+      sellado:      r => r.sellado,
+      presentacion: r => r.presentacion,
+      unidades:     r => r.unidades,
+      kilosEnt:     r => r.librasEnt,
+      pctRetal:     r => r.librasTaj > 0 ? r.librasRetal / r.librasTaj : 0,
+    });
+  el.innerHTML = `
+    <thead><tr>
+      <th data-orden="mes">Mes</th>
+      <th data-orden="producto">Producto</th>
+      <th data-orden="sellado">Tipo de sellado</th>
+      <th data-orden="presentacion">Presentación</th>
+      <th data-orden="unidades" class="num">Cantidad obtenida</th>
+      <th data-orden="kilosEnt" class="num">Kilos entregados</th>
+      <th data-orden="pctRetal" class="num">% Retal</th>
+    </tr></thead>
+    <tbody>${filas.length ? filas.map(r => `<tr>
       <td class="mono">${esc(r.mes)}</td>
       <td title="${esc(r.producto)}">${esc(nombreCorto(r.producto))}</td>
       <td>${esc(r.sellado)}</td>
@@ -4611,8 +4903,10 @@ function renderDashboard() {
       <td class="num">${r.unidades.toLocaleString('es-CO')}</td>
       <td class="num">${fmtNum(r.librasEnt * LB_TO_KG, 2)}</td>
       <td class="num" style="${r.librasRetal>0?'color:var(--danger)':''}">${r.librasTaj>0?fmtNum(r.librasRetal/r.librasTaj*100,2)+'%':'—'}</td>
-    </tr>`).join('') : '<tr><td colspan="7" class="empty-state"><div class="empty-state-text">Sin datos con estos filtros</div></td></tr>'}</tbody>`;
+    </tr>`).join('') : vacio(7)}</tbody>`;
+  prepararOrden('#tbl-resumen', 'dres', pintarTablaResumen);
 }
+
 // Acorta etiquetas de eje: quita el prefijo comun ("QUESO FRESCO VARIEDADES: ")
 // para que se distinga la variedad, y recorta lo que siga sobrando.
 function recortarEtiqueta(value) {
@@ -4653,7 +4947,10 @@ function limpiarFiltrosDash() {
   dashFiltros.anios = []; dashFiltros.meses = [];
   dashFiltros.clientes = []; dashFiltros.productos = []; dashFiltros.presentaciones = [];
   dashFiltros.sellados = []; dashFiltros.estados = []; dashFiltros.responsables = [];
+  dashFiltros.operaciones = []; dashFiltros.semanas = [];
   dashFiltros.buscar = '';
+  dashBusca.prod = ''; dashBusca.cli = ''; dashBusca.resumen = '';
+  limpiarOrdenColumna('dprod'); limpiarOrdenColumna('dcli'); limpiarOrdenColumna('dres');
   dashFiltros.fechaDesde = ''; dashFiltros.fechaHasta = '';
   dashFiltros.fechaCorteDesde = ''; dashFiltros.fechaCorteHasta = '';
   const dfb = document.getElementById('dash-filter-bar');
@@ -4724,6 +5021,7 @@ function renderCintas() {
     });
   }
   prepararOrden('#view-cintas .data-table', 'cintas', renderCintas);
+  espejarScrollTodos('#view-cintas .table-wrap');
 
   if (countEl) {
     countEl.textContent = buscar ? `${lista.length} de ${total} códigos` : `${total} códigos en total`;
