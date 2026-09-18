@@ -1127,13 +1127,24 @@ input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin
   border-radius: var(--radius);
   background: var(--bg);
   box-shadow: var(--nm-in-xs);
-  margin: 0 0 6px;
-  /* Se queda pegada arriba: al bajar por una tabla larga sigue a la vista,
-     también con un desglose abierto a mitad de la tabla.
-     Requiere que la tarjeta que la contiene NO tenga overflow:hidden. */
-  position: sticky; top: 0; z-index: 25;
+  margin: 0 0 8px;
   scroll-behavior: auto;
-  box-shadow: var(--nm-in-xs), 0 8px 12px -8px rgba(27,53,74,.35);
+}
+
+/* En Historial diario la tabla se desplaza DENTRO de su caja, no con la página.
+   Con eso el encabezado pegajoso funciona de verdad y la barra de arriba se
+   queda en el borde de la tabla en vez de flotar sobre los pedidos. */
+#view-historial .table-wrap {
+  max-block-size: calc(100vh - 402px);
+  min-block-size: 300px;
+  overflow: auto;
+  /* Sin relleno arriba: si no, las filas se asoman por encima del encabezado */
+  padding-block-start: 0;
+}
+#view-historial .data-table thead { background: var(--bg); }
+#view-historial .data-table thead th {
+  box-shadow: 0 2px 0 var(--nm-dark-soft);
+  z-index: 12;
 }
 .scroll-espejo > div { block-size: 1px; }
 
@@ -3096,28 +3107,6 @@ function semanasDisponibles(lista) {
   return [...new Set(lista.map(p => semanaJuliana(p.fecha_corte)).filter(Boolean))].sort().reverse();
 }
 
-// "2026-01 Q1" → "S01–S03": el tramo de semanas julianas que cubre la quincena
-function semanasDeQuincena(clave) {
-  const e = etiquetaQuincena(clave);
-  const m = /\(([^)]+)\)/.exec(e);
-  return m ? m[1] : '';
-}
-
-// "2026-01 Q1" → "2026-01 Q1 (S01–S03)": las semanas julianas que cubre la quincena
-function etiquetaQuincena(clave) {
-  const m = /^(\d{4})-(\d{2}) (Q1|Q2)$/.exec(clave);
-  if (!m) return clave;
-  const anio = m[1], mes = m[2], q = m[3];
-  const ultimoDia = new Date(Number(anio), Number(mes), 0).getDate();
-  const desde = q === 'Q1' ? '01' : '16';
-  const hasta = q === 'Q1' ? '15' : String(ultimoDia).padStart(2, '0');
-  const a = semanaJulianaNum(`${anio}-${mes}-${desde}`);
-  const b = semanaJulianaNum(`${anio}-${mes}-${hasta}`);
-  if (!a || !b) return clave;
-  const S = n => 'S' + String(n).padStart(2, '0');
-  return `${clave} (${a === b ? S(a) : S(a) + '–' + S(b)})`;
-}
-
 // ═══════════════════════════════════════════════════════════
 // SCROLL HORIZONTAL DUPLICADO ARRIBA DE LA TABLA
 // Inserta una barra gemela justo encima del contenedor y mantiene
@@ -4380,8 +4369,8 @@ function renderDashboard() {
       <div class="dash-grid">
         <div class="dash-card">
           <div class="dash-card-header">
-            <span class="dash-card-title">Evolución por quincena</span>
-            <span class="dash-card-sub">por fecha de corte · Q1: días 1-15 · Q2: día 16 al fin de mes</span>
+            <span class="dash-card-title">Evolución por semana</span>
+            <span class="dash-card-sub">kilos por semana juliana de la fecha de corte</span>
           </div>
           <div class="dash-card-body"><div class="chart-wrap"><canvas id="ch-evolucion"></canvas></div></div>
         </div>
@@ -4607,9 +4596,9 @@ function renderDashboard() {
       <div class="metric-sub">sobre kilos tajados</div>
     </div>
     <div class="metric-card">
-      <div class="metric-label">Diferencia</div>
+      <div class="metric-label">Diferencia (kg)</div>
       <div class="metric-value" style="color:${Math.abs(pctDif) > 1 ? 'var(--danger)' : 'var(--accent)'}">${fmtNum(diferencia * LB_TO_KG, 1)}</div>
-      <div class="metric-sub">kg · ${fmtNum(diferencia, 1)} lb</div>
+      <div class="metric-sub">${fmtNum(diferencia, 1)} lb</div>
     </div>
     <div class="metric-card">
       <div class="metric-label">% Diferencia</div>
@@ -4727,8 +4716,20 @@ function renderDashboard() {
       quincena: s.quincena,
       mes: nombreMes(s.mes),
       anio: s.anio,
+      kilosEnt:   s.librasEnt   * LB_TO_KG,
+      kilosRetal: s.librasRetal * LB_TO_KG,
       pct: s.librasTaj > 0 ? ((s.librasTaj - s.librasEnt - s.librasRetal) / s.librasTaj) * 100 : 0
     }));
+
+  // Niveles del eje, compartidos por los dos gráficos con fecha en X
+  const nivelesSemana = [
+    semanasOrden.map(s => s.quincena),
+    semanasOrden.map(s => s.mes),
+    semanasOrden.map(s => s.anio)
+  ];
+  const tituloSemana = i => semanasOrden[i]
+    ? `Semana ${semanasOrden[i].corta.slice(1)} · ${semanasOrden[i].quincena} · ${semanasOrden[i].mes} ${semanasOrden[i].anio}`
+    : '';
 
   const colorSemana = s => Math.abs(s.pct) > 1 ? '#9B2335' : '#2d5a7b';
 
@@ -4751,52 +4752,29 @@ function renderDashboard() {
     options: chartBaseOptions({
       suffix: '%',
       umbral: 1,
-      niveles: [
-        semanasOrden.map(s => s.quincena),
-        semanasOrden.map(s => s.mes),
-        semanasOrden.map(s => s.anio)
-      ],
-      tituloTooltip: i => semanasOrden[i]
-        ? `Semana ${semanasOrden[i].corta.slice(1)} · ${semanasOrden[i].quincena} · ${semanasOrden[i].mes} ${semanasOrden[i].anio}`
-        : ''
+      niveles: nivelesSemana,
+      tituloTooltip: tituloSemana
     }),
     plugins: [franjaUmbral, ejeJerarquico]
   });
 
-  // ── Evolución por quincena (sobre la fecha de corte) ──
-  const porQuincena = {};
-  fil.forEach(p => {
-    const f = p.fecha_corte || '';
-    if (f.length < 10) return;
-    const dia = parseInt(f.slice(8, 10), 10);
-    const k = `${f.slice(0,7)} ${dia <= 15 ? 'Q1' : 'Q2'}`;
-    if (!porQuincena[k]) porQuincena[k] = { k, kilosEnt: 0, kilosRetal: 0 };
-    porQuincena[k].kilosEnt   += num(p.pt_libras_entregadas) * LB_TO_KG;
-    porQuincena[k].kilosRetal += num(p.pt_retal_lb) * LB_TO_KG;
-  });
-  const quincenas = Object.values(porQuincena).sort((a,b) => a.k.localeCompare(b.k));
-
+  // ── Evolución por semana juliana (sobre la fecha de corte) ──
   destruirChart('ch-evolucion');
   dashCharts['ch-evolucion'] = new Chart(document.getElementById('ch-evolucion'), {
     type: 'line',
     data: {
-      // La marca es el tramo de semanas; la quincena va en su propio renglón
-      labels: quincenas.map(q => semanasDeQuincena(q.k)),
+      labels: semanasOrden.map(s => s.corta),
       datasets: [
-        { label: 'Kilos entregados', data: quincenas.map(q => +q.kilosEnt.toFixed(2)),
+        { label: 'Kilos entregados', data: semanasOrden.map(s => +s.kilosEnt.toFixed(2)),
           borderColor: '#2d5a7b', backgroundColor: '#2d5a7b33', tension: .3, fill: true },
-        { label: 'Kilos de retal', data: quincenas.map(q => +q.kilosRetal.toFixed(2)),
+        { label: 'Kilos de retal', data: semanasOrden.map(s => +s.kilosRetal.toFixed(2)),
           borderColor: '#9B2335', backgroundColor: '#9B233533', tension: .3, fill: true },
       ]
     },
     options: chartBaseOptions({
       suffix: ' kg',
-      niveles: [
-        quincenas.map(q => q.k.slice(8)),
-        quincenas.map(q => nombreMes(q.k)),
-        quincenas.map(q => q.k.slice(0, 4))
-      ],
-      tituloTooltip: i => quincenas[i] ? etiquetaQuincena(quincenas[i].k) : ''
+      niveles: nivelesSemana,
+      tituloTooltip: tituloSemana
     }),
     plugins: [ejeJerarquico]
   });
@@ -4825,10 +4803,11 @@ function renderDashboard() {
     const presentacion = p.pt_presentacion || '—';
     const k = producto + '||' + presentacion;
     if (!mapaProdPres[k]) mapaProdPres[k] =
-      { producto, presentacion, pedidos: 0, unidades: 0, librasRetal: 0, librasTaj: 0 };
+      { producto, presentacion, pedidos: 0, unidades: 0, librasEnt: 0, librasRetal: 0, librasTaj: 0 };
     const r = mapaProdPres[k];
     r.pedidos++;
     r.unidades    += num(p.pt_cantidad_obtenida);
+    r.librasEnt   += num(p.pt_libras_entregadas);
     r.librasRetal += num(p.pt_retal_lb);
     r.librasTaj   += num(p.mp_libras_tajadas);
   });
@@ -4868,6 +4847,16 @@ const dashBusca = { prod: '', cli: '', resumen: '' };
 const dashDatos = { prod: [], cli: [], resumen: [] };
 
 const coincideTexto = (texto, q) => !q || String(texto).toLowerCase().includes(q.toLowerCase());
+
+// Balance de material del grupo, en libras: tajado − entregado − retal
+const difLb  = r => r.librasTaj > 0 ? r.librasTaj - r.librasEnt - r.librasRetal : 0;
+const difPct = r => r.librasTaj > 0 ? (difLb(r) / r.librasTaj) * 100 : 0;
+const celdaDif = r => {
+  const d = difLb(r), p = difPct(r);
+  const rojo = Math.abs(p) > 1 ? 'color:var(--danger)' : '';
+  return `<td class="num" style="${rojo}">${r.librasTaj > 0 ? fmtNum(d * LB_TO_KG, 2) : '—'}</td>
+          <td class="num" style="${rojo}">${r.librasTaj > 0 ? fmtNum(p, 2) + '%' : '—'}</td>`;
+};
 const vacio = n => `<tr><td colspan="${n}" class="empty-state"><div class="empty-state-text">Sin datos con estos filtros</div></td></tr>`;
 
 function pintarTablaProd() {
@@ -4882,6 +4871,8 @@ function pintarTablaProd() {
       unidades:     r => r.unidades,
       retal:        r => r.librasRetal,
       pctRetal:     r => r.librasTaj > 0 ? r.librasRetal / r.librasTaj : 0,
+      dif:          r => difLb(r),
+      pctDif:       r => difPct(r),
     });
   el.innerHTML = `
     <thead><tr>
@@ -4891,6 +4882,8 @@ function pintarTablaProd() {
       <th data-orden="unidades" class="num">Unidades</th>
       <th data-orden="retal" class="num">Retal (kg)</th>
       <th data-orden="pctRetal" class="num">% Retal</th>
+      <th data-orden="dif" class="num">Diferencia (kg)</th>
+      <th data-orden="pctDif" class="num">% Dif.</th>
     </tr></thead>
     <tbody>${filas.length ? filas.map(r => `<tr>
       <td title="${esc(r.producto)}"><strong>${esc(nombreCorto(r.producto))}</strong></td>
@@ -4899,7 +4892,8 @@ function pintarTablaProd() {
       <td class="num">${r.unidades.toLocaleString('es-CO')}</td>
       <td class="num" style="${r.librasRetal>0?'color:var(--danger)':''}">${fmtNum(r.librasRetal * LB_TO_KG, 2)}</td>
       <td class="num">${r.librasTaj>0?fmtNum((r.librasRetal/r.librasTaj)*100,2)+'%':'—'}</td>
-    </tr>`).join('') : vacio(6)}</tbody>`;
+      ${celdaDif(r)}
+    </tr>`).join('') : vacio(8)}</tbody>`;
   prepararOrden('#tbl-prod', 'dprod', pintarTablaProd);
 }
 
@@ -4914,6 +4908,8 @@ function pintarTablaCli() {
       unidades:  r => r.unidades,
       kilosEnt:  r => r.librasEnt,
       retal:     r => r.librasRetal,
+      dif:       r => difLb(r),
+      pctDif:    r => difPct(r),
     });
   el.innerHTML = `
     <thead><tr>
@@ -4922,6 +4918,8 @@ function pintarTablaCli() {
       <th data-orden="unidades" class="num">Unidades</th>
       <th data-orden="kilosEnt" class="num">Kilos ent.</th>
       <th data-orden="retal" class="num">Retal (kg)</th>
+      <th data-orden="dif" class="num">Diferencia (kg)</th>
+      <th data-orden="pctDif" class="num">% Dif.</th>
     </tr></thead>
     <tbody>${filas.length ? filas.map(r => `<tr>
       <td><strong>${esc(r.k)}</strong></td>
@@ -4929,7 +4927,8 @@ function pintarTablaCli() {
       <td class="num">${r.unidades.toLocaleString('es-CO')}</td>
       <td class="num">${fmtNum(r.librasEnt * LB_TO_KG, 2)}</td>
       <td class="num" style="${r.librasRetal>0?'color:var(--danger)':''}">${fmtNum(r.librasRetal * LB_TO_KG, 2)}</td>
-    </tr>`).join('') : vacio(5)}</tbody>`;
+      ${celdaDif(r)}
+    </tr>`).join('') : vacio(7)}</tbody>`;
   prepararOrden('#tbl-cli', 'dcli', pintarTablaCli);
 }
 
@@ -4946,6 +4945,8 @@ function pintarTablaResumen() {
       unidades:     r => r.unidades,
       kilosEnt:     r => r.librasEnt,
       pctRetal:     r => r.librasTaj > 0 ? r.librasRetal / r.librasTaj : 0,
+      dif:          r => difLb(r),
+      pctDif:       r => difPct(r),
     });
   el.innerHTML = `
     <thead><tr>
@@ -4956,6 +4957,8 @@ function pintarTablaResumen() {
       <th data-orden="unidades" class="num">Cantidad obtenida</th>
       <th data-orden="kilosEnt" class="num">Kilos entregados</th>
       <th data-orden="pctRetal" class="num">% Retal</th>
+      <th data-orden="dif" class="num">Diferencia (kg)</th>
+      <th data-orden="pctDif" class="num">% Dif.</th>
     </tr></thead>
     <tbody>${filas.length ? filas.map(r => `<tr>
       <td class="mono">${esc(r.mes)}</td>
@@ -4965,7 +4968,8 @@ function pintarTablaResumen() {
       <td class="num">${r.unidades.toLocaleString('es-CO')}</td>
       <td class="num">${fmtNum(r.librasEnt * LB_TO_KG, 2)}</td>
       <td class="num" style="${r.librasRetal>0?'color:var(--danger)':''}">${r.librasTaj>0?fmtNum(r.librasRetal/r.librasTaj*100,2)+'%':'—'}</td>
-    </tr>`).join('') : vacio(7)}</tbody>`;
+      ${celdaDif(r)}
+    </tr>`).join('') : vacio(9)}</tbody>`;
   prepararOrden('#tbl-resumen', 'dres', pintarTablaResumen);
 }
 
