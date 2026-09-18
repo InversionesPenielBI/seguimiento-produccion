@@ -278,7 +278,7 @@ body {
 button:disabled, .btn:disabled { opacity: .5; cursor: not-allowed; box-shadow: var(--nm-in-xs); }
 
 /* ── Vistas ── */
-.view { flex: 1; overflow-y: auto; display: none; padding: 34px 36px 48px; }
+.view { flex: 1; overflow-y: auto; display: none; padding: 34px 36px 48px; --pad-vista: 34px; }
 .view.active { display: block; }
 
 /* ── Tarjetas ── */
@@ -815,7 +815,7 @@ table.data-table {
 /* ── Responsive ── */
 @media (max-width: 1500px) {
   .metrics-grid, .dash-metrics { gap: 18px; }
-  .view { padding: 28px 26px 40px; }
+  .view { padding: 28px 26px 40px; --pad-vista: 28px; }
   /* En pantallas de portatil las tablas se compactan para no perder filas visibles */
   .data-table th { padding: 12px 11px; }
   .data-table td { padding: 10px 11px; font-size: 12.5px; }
@@ -941,6 +941,21 @@ table.data-table {
               visibility 0s .36s;
 }
 .card-header::after { transition: opacity .28s ease; }
+
+/* Cada cliente de la vista "Por cliente" se contrae igual que las secciones
+   del formulario, pero su cuerpo es la tabla, no un .card-body. */
+.cliente-cuerpo {
+  overflow: hidden;
+  block-size: auto;
+  opacity: 1;
+  transition: block-size .36s cubic-bezier(.4,0,.2,1), opacity .22s ease .06s;
+}
+.card.collapsed .cliente-cuerpo {
+  block-size: 0;
+  opacity: 0;
+  visibility: hidden;
+  transition: block-size .36s cubic-bezier(.4,0,.2,1), opacity .18s ease, visibility 0s .36s;
+}
 
 /* ══════════════════════════════════════════════════════════
    COLORES POR PRESENTACION Y POR ESTADO
@@ -1122,37 +1137,51 @@ input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin
 .th-ordenable.ordenada .sort-arrow { opacity: 1; }
 
 /* ── Barra de desplazamiento horizontal duplicada encima de la tabla ── */
+/* ── Bloque que acompaña al bajar: barra de desplazamiento + encabezado ──
+   La tabla sigue creciendo con la página (no se encoge en una caja propia).
+   Lo que se queda arriba es este bloque opaco, con una copia del encabezado
+   que se sincroniza en horizontal con la tabla. Al ser opaco y de una pieza,
+   los pedidos pasan POR DEBAJO y no se ven a través de la barra. */
 .scroll-espejo {
+  position: sticky; top: 0; z-index: 30;
+  background: var(--bg);
+  padding: 4px 4px 0;
+  margin: 0 0 6px;
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+.scroll-espejo.pegada { box-shadow: 0 12px 16px -12px rgba(27,53,74,.5); }
+.scroll-espejo.pegada::before {
+  content: ''; position: absolute; inset-inline: 0; bottom: 100%;
+  block-size: var(--pad-vista, 34px);
+  background: var(--bg);
+}
+
+.espejo-barra {
   overflow-x: auto; overflow-y: hidden;
   border-radius: var(--radius);
   background: var(--bg);
   box-shadow: var(--nm-in-xs);
-  margin: 0 0 8px;
   scroll-behavior: auto;
 }
+.espejo-barra > div { block-size: 1px; }
 
-/* En Historial diario la tabla se desplaza DENTRO de su caja, no con la página.
-   Con eso el encabezado pegajoso funciona de verdad y la barra de arriba se
-   queda en el borde de la tabla en vez de flotar sobre los pedidos. */
-#view-historial .table-wrap {
-  max-block-size: calc(100vh - 402px);
-  min-block-size: 300px;
-  overflow: auto;
-  /* Sin relleno arriba: si no, las filas se asoman por encima del encabezado */
-  padding-block-start: 0;
+/* La copia del encabezado va en posición absoluta: así el bloque no crece en
+   el flujo y la tabla no se mueve cuando aparece o desaparece. */
+.espejo-head {
+  position: absolute; top: 100%; inset-inline: 4px;
+  overflow: hidden; display: none;
+  background: var(--bg);
+  border-radius: 0 0 var(--radius) var(--radius);
 }
-#view-historial .data-table thead { background: var(--bg); }
-#view-historial .data-table thead th {
-  box-shadow: 0 2px 0 var(--nm-dark-soft);
-  z-index: 12;
-}
-.scroll-espejo > div { block-size: 1px; }
+.scroll-espejo.con-encabezado .espejo-head { display: block; }
+.espejo-head table { inline-size: auto; table-layout: fixed; }
+.espejo-head th { position: static !important; }
 
 /* Mas gruesa y con mas contraste en las tablas y en su espejo */
-.scroll-espejo::-webkit-scrollbar,
+.espejo-barra::-webkit-scrollbar,
 .table-wrap::-webkit-scrollbar,
 .dash-card-body::-webkit-scrollbar { height: 16px; width: 16px; }
-.scroll-espejo::-webkit-scrollbar-thumb,
+.espejo-barra::-webkit-scrollbar-thumb,
 .table-wrap::-webkit-scrollbar-thumb,
 .dash-card-body::-webkit-scrollbar-thumb {
   background: var(--accent-mid);
@@ -1160,10 +1189,10 @@ input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin
   border-radius: var(--pill);
   box-shadow: none;
 }
-.scroll-espejo::-webkit-scrollbar-thumb:hover,
+.espejo-barra::-webkit-scrollbar-thumb:hover,
 .table-wrap::-webkit-scrollbar-thumb:hover,
 .dash-card-body::-webkit-scrollbar-thumb:hover { background: var(--accent); }
-.scroll-espejo, .table-wrap, .dash-card-body {
+.espejo-barra, .table-wrap, .dash-card-body {
   scrollbar-width: auto; scrollbar-color: var(--accent-mid) var(--bg);
 }
 
@@ -3118,28 +3147,103 @@ function espejarScroll(wrap) {
   if (!esp || !esp.classList || !esp.classList.contains('scroll-espejo')) {
     esp = document.createElement('div');
     esp.className = 'scroll-espejo';
-    esp.innerHTML = '<div></div>';
+    esp.innerHTML = '<div class="espejo-barra"><div></div></div><div class="espejo-head"></div>';
     wrap.parentNode.insertBefore(esp, wrap);
+    esp._barra = esp.querySelector('.espejo-barra');
+    esp._cab   = esp.querySelector('.espejo-head');
+    esp._wrap  = wrap;
+
+    // Una sola escritura por cuadro y solo si la posición cambió: así no se
+    // pelea con el desplazamiento por inercia (los eventos de scroll son
+    // asíncronos, por eso los banderines no servían).
     let cuadro = 0;
-    const sincronizar = (origen, destino) => {
+    const sincronizar = origen => {
       if (cuadro) return;
       cuadro = requestAnimationFrame(() => {
         cuadro = 0;
-        const a = Math.round(origen.scrollLeft), b = Math.round(destino.scrollLeft);
-        if (a !== b) destino.scrollLeft = a;
+        const x = Math.round(origen.scrollLeft);
+        if (Math.round(wrap.scrollLeft)       !== x) wrap.scrollLeft       = x;
+        if (Math.round(esp._barra.scrollLeft) !== x) esp._barra.scrollLeft = x;
+        if (Math.round(esp._cab.scrollLeft)   !== x) esp._cab.scrollLeft   = x;
       });
     };
-    esp.addEventListener('scroll',  () => sincronizar(esp, wrap),  { passive: true });
-    wrap.addEventListener('scroll', () => sincronizar(wrap, esp), { passive: true });
+    esp._barra.addEventListener('scroll', () => sincronizar(esp._barra), { passive: true });
+    wrap.addEventListener('scroll',       () => sincronizar(wrap),       { passive: true });
+    vigilarEncabezado(esp.closest('.view'));
   }
+
   const ancho = wrap.scrollWidth;
-  esp.firstElementChild.style.width = ancho + 'px';
+  if (!wrap.clientWidth) { esp.style.display = 'none'; return; }
+  esp._barra.firstElementChild.style.width = ancho + 'px';
   esp.style.display = ancho > wrap.clientWidth + 1 ? '' : 'none';
   // Si el navegador usa barras superpuestas no ocupan alto: se reserva a mano
-  // para que la barra de arriba siempre se pueda ver y arrastrar.
-  esp.style.blockSize = '';
-  if (esp.offsetHeight - esp.clientHeight === 0) esp.style.blockSize = '14px';
-  esp.scrollLeft = wrap.scrollLeft;
+  // para que la barra siempre se pueda ver y arrastrar.
+  esp._barra.style.blockSize = '';
+  if (esp._barra.offsetHeight - esp._barra.clientHeight === 0) esp._barra.style.blockSize = '14px';
+
+  clonarEncabezado(esp);
+  esp._barra.scrollLeft = wrap.scrollLeft;
+  esp._cab.scrollLeft   = wrap.scrollLeft;
+  actualizarPegada(esp);
+}
+
+// Copia el encabezado de la tabla con los anchos ya medidos, para que las
+// columnas calcen. Los clics se reenvían al encabezado real, así el orden
+// por columna sigue funcionando desde la copia.
+function clonarEncabezado(esp) {
+  const tabla = esp._wrap.querySelector('table.data-table');
+  if (!tabla || !tabla.tHead) { esp._cab.innerHTML = ''; return; }
+
+  const copia = document.createElement('table');
+  copia.className = tabla.className;
+  copia.setAttribute('style', tabla.getAttribute('style') || '');
+  copia.style.tableLayout = 'fixed';
+  copia.style.width = tabla.getBoundingClientRect().width + 'px';
+  copia.appendChild(tabla.tHead.cloneNode(true));
+
+  const reales = tabla.tHead.rows[0].cells;
+  const copias = copia.tHead.rows[0].cells;
+  for (let i = 0; i < copias.length && i < reales.length; i++) {
+    const ancho = reales[i].getBoundingClientRect().width + 'px';
+    copias[i].style.width = copias[i].style.minWidth = copias[i].style.maxWidth = ancho;
+    if (reales[i].dataset.orden) {
+      const real = reales[i];
+      copias[i].style.cursor = 'pointer';
+      copias[i].addEventListener('click', () => real.click());
+    }
+  }
+  esp._cab.innerHTML = '';
+  esp._cab.appendChild(copia);
+}
+
+// Muestra la copia del encabezado solo cuando el real ya pasó por debajo.
+function actualizarPegada(esp) {
+  const vista = esp.closest('.view');
+  const tabla = esp._wrap && esp._wrap.querySelector('table.data-table');
+  if (!vista || !tabla || esp.style.display === 'none') return;
+  const cs = getComputedStyle(vista);
+  const tope = vista.getBoundingClientRect().top + parseFloat(cs.paddingTop || 0);
+  const altoBarra = esp._barra.offsetHeight;
+  const rTabla = tabla.getBoundingClientRect();
+  const rCabeza = tabla.tHead ? tabla.tHead.getBoundingClientRect() : rTabla;
+  const enElTope = esp.getBoundingClientRect().top <= tope + 1;
+  const mostrar = enElTope && rCabeza.bottom < tope + altoBarra + 4
+                  && rTabla.bottom > tope + altoBarra + 50;
+  esp.classList.toggle('con-encabezado', mostrar);
+  esp.classList.toggle('pegada', enElTope);
+}
+
+function vigilarEncabezado(vista) {
+  if (!vista || vista._vigilada) return;
+  vista._vigilada = true;
+  let cuadro = 0;
+  vista.addEventListener('scroll', () => {
+    if (cuadro) return;
+    cuadro = requestAnimationFrame(() => {
+      cuadro = 0;
+      vista.querySelectorAll('.scroll-espejo').forEach(actualizarPegada);
+    });
+  }, { passive: true });
 }
 
 function espejarScrollTodos(selector) {
@@ -4131,10 +4235,17 @@ function renderResumen() {
     fb._msResponsable = buildMultiSelect('Responsable', responsables, resumenFiltros.responsables, applyResumenFilters);
     fila2.appendChild(fb._msResponsable);
 
+    const btnTodo = document.createElement('button');
+    btnTodo.className = 'btn btn-sm';
+    btnTodo.id = 'btn-clientes-todo';
+    btnTodo.textContent = 'Contraer todo';
+    btnTodo.style.marginLeft = 'auto';
+    btnTodo.addEventListener('click', alternarTodosClientes);
+    fila2.appendChild(btnTodo);
+
     const btnLimpiar = document.createElement('button');
     btnLimpiar.className = 'btn btn-sm';
     btnLimpiar.textContent = 'Limpiar';
-    btnLimpiar.style.marginLeft = 'auto';
     btnLimpiar.addEventListener('click', () => {
       resumenFiltros.clientes = []; resumenFiltros.productos = []; resumenFiltros.presentaciones = [];
       resumenFiltros.sellados = []; resumenFiltros.estados = []; resumenFiltros.responsables = [];
@@ -4164,6 +4275,44 @@ function renderResumen() {
   }
 
   applyResumenFilters();
+}
+
+// Clientes contraídos en "Por cliente". Se guarda aparte del render para que
+// el estado sobreviva a los filtros y al reordenar.
+const clientesContraidos = new Set();
+
+function toggleCliente(cabecera, cliente) {
+  const tarjeta = cabecera.closest('.card');
+  const contraida = tarjeta.classList.toggle('collapsed');
+  if (contraida) clientesContraidos.add(cliente);
+  else {
+    clientesContraidos.delete(cliente);
+    // al abrirse cambian los anchos visibles: se recalcula la barra de arriba
+    espejarScrollTodos('#view-resumen .table-wrap');
+  }
+  actualizarBotonClientes();
+}
+
+function alternarTodosClientes() {
+  const tarjetas = [...document.querySelectorAll('#resumen-data > .card')];
+  if (!tarjetas.length) return;
+  const abrir = tarjetas.some(t => t.classList.contains('collapsed'));
+  tarjetas.forEach(t => {
+    const nombre = t.querySelector('.card-title')?.textContent || '';
+    t.classList.toggle('collapsed', !abrir);
+    if (abrir) clientesContraidos.delete(nombre);
+    else clientesContraidos.add(nombre);
+  });
+  if (abrir) espejarScrollTodos('#view-resumen .table-wrap');
+  actualizarBotonClientes();
+}
+
+function actualizarBotonClientes() {
+  const btn = document.getElementById('btn-clientes-todo');
+  if (!btn) return;
+  const tarjetas = [...document.querySelectorAll('#resumen-data > .card')];
+  const hayContraidas = tarjetas.some(t => t.classList.contains('collapsed'));
+  btn.textContent = hayContraidas ? 'Expandir todo' : 'Contraer todo';
 }
 
 // El orden elegido en un encabezado se aplica a todos los grupos de cliente
@@ -4221,8 +4370,9 @@ function applyResumenFilters() {
   dataDiv.innerHTML = rows.length === 0
     ? `<div class="empty-state"><div class="empty-state-text">No hay datos con estos filtros</div></div>`
     : rows.map(r => `
-      <div class="card" style="margin-bottom:16px;padding:0">
-        <div class="card-header">
+      <div class="card${clientesContraidos.has(r.cliente) ? ' collapsed' : ''}" style="margin-bottom:16px;padding:0">
+        <div class="card-header collapsible" onclick="toggleCliente(this, '${esc(r.cliente).replace(/'/g, "\\'")}')"
+             title="Clic para contraer o expandir este cliente">
           <div>
             <span class="card-title">${esc(r.cliente)}</span>
             <span class="card-sub" style="margin-left:10px">${r.listaPedidos.length} pedido${r.listaPedidos.length!==1?'s':''}</span>
@@ -4231,8 +4381,10 @@ function applyResumenFilters() {
             <span><strong style="color:var(--text)">${r.cantObt.toLocaleString('es-CO')}</strong> unidades</span>
             <span><strong style="color:var(--text)">${fmtNum(r.librasEnt * LB_TO_KG,1)}</strong> kg entregados</span>
             <span><strong style="color:${r.retal>0?'var(--danger)':'var(--text)'}">${fmtNum(r.retal * LB_TO_KG,1)}</strong> kg retal</span>
+            <span class="card-chevron">▾</span>
           </div>
         </div>
+        <div class="cliente-cuerpo">
         <div class="table-wrap">
           <table class="data-table" style="font-size:12px">
             <thead><tr>
@@ -4267,10 +4419,12 @@ function applyResumenFilters() {
             </tbody>
           </table>
         </div>
+        </div>
       </div>`).join('');
 
   prepararOrden('#view-resumen .data-table', 'resumen', applyResumenFilters);
   espejarScrollTodos('#view-resumen .table-wrap');
+  actualizarBotonClientes();
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -4383,7 +4537,7 @@ function renderDashboard() {
         </div>
       </div>
 
-      <div class="dash-grid">
+      <div class="dash-grid" style="grid-template-columns:1fr">
         <div class="dash-card">
           <div class="dash-card-header">
             <span class="dash-card-title">Detalle por producto</span>
@@ -4394,6 +4548,9 @@ function renderDashboard() {
             <table class="dash-table" id="tbl-prod"></table>
           </div>
         </div>
+      </div>
+
+      <div class="dash-grid" style="grid-template-columns:1fr">
         <div class="dash-card">
           <div class="dash-card-header">
             <span class="dash-card-title">Detalle por cliente</span>
