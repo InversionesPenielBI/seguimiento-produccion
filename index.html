@@ -426,7 +426,6 @@ table.data-table {
   padding: 14px 16px; text-align: left;
   border-bottom: 2px solid var(--nm-dark-soft);
   white-space: nowrap;
-  position: sticky; top: 0; z-index: 2;
   background: var(--bg);
 }
 .data-table td {
@@ -1060,9 +1059,10 @@ input.campo-calc {
    El sticky va por FUERA del bloque con overflow:hidden — dentro se anclaría a
    ese bloque en vez de al área que se desplaza. */
 .detalle-sticky {
-  position: sticky; left: 0;
+  position: static;
   inline-size: max-content; max-inline-size: 100%;
 }
+.row-detalle.abierta .detalle-sticky { position: sticky; left: 0; }
 .detalle-traza-inner { padding: 20px 28px 22px 44px; }
 .detalle-traza-titulo {
   font-size: 10px; font-weight: 700; letter-spacing: .1em;
@@ -3195,22 +3195,30 @@ function espejarScroll(wrap) {
     esp._cab   = esp.querySelector('.espejo-head');
     esp._wrap  = wrap;
 
-    // Una sola escritura por cuadro y solo si la posición cambió: así no se
-    // pelea con el desplazamiento por inercia (los eventos de scroll son
-    // asíncronos, por eso los banderines no servían).
-    let cuadro = 0;
-    const sincronizar = origen => {
-      if (cuadro) return;
-      cuadro = requestAnimationFrame(() => {
-        cuadro = 0;
-        const x = Math.round(origen.scrollLeft);
-        if (Math.round(wrap.scrollLeft)       !== x) wrap.scrollLeft       = x;
-        if (Math.round(esp._barra.scrollLeft) !== x) esp._barra.scrollLeft = x;
-        if (Math.round(esp._cab.scrollLeft)   !== x) esp._cab.scrollLeft   = x;
-      });
+    // Sincronizar las dos barras tiene una trampa: cada escritura nuestra
+    // dispara otro evento de scroll, y ese eco llega un cuadro tarde. Si se
+    // atiende, devuelve la barra a la posición vieja — eso era el tirón.
+    // Se recuerda el último valor escrito: si el evento trae justo ese valor
+    // es nuestro propio eco y se ignora; cualquier otro es del usuario.
+    // Se aplica en el acto (sin rAF) para que barra y tabla se muevan en el
+    // mismo cuadro; sin cola no hay cuadros descartados.
+    esp._ultimo = -1;
+    const aplicar = x => {
+      esp._ultimo = x;
+      if (Math.round(wrap.scrollLeft)       !== x) wrap.scrollLeft       = x;
+      if (Math.round(esp._barra.scrollLeft) !== x) esp._barra.scrollLeft = x;
+      // La copia del encabezado solo se mueve si está a la vista
+      if (esp.classList.contains('con-encabezado') &&
+          Math.round(esp._cab.scrollLeft) !== x) esp._cab.scrollLeft = x;
     };
-    esp._barra.addEventListener('scroll', () => sincronizar(esp._barra), { passive: true });
-    wrap.addEventListener('scroll',       () => sincronizar(wrap),       { passive: true });
+    const alDesplazar = origen => () => {
+      const x = Math.round(origen.scrollLeft);
+      if (x === esp._ultimo) return;
+      aplicar(x);
+    };
+    esp._aplicar = aplicar;
+    esp._barra.addEventListener('scroll', alDesplazar(esp._barra), { passive: true });
+    wrap.addEventListener('scroll',       alDesplazar(wrap),       { passive: true });
     vigilarEncabezado(esp.closest('.view'));
   }
 
@@ -3224,9 +3232,8 @@ function espejarScroll(wrap) {
   if (esp._barra.offsetHeight - esp._barra.clientHeight === 0) esp._barra.style.blockSize = '14px';
 
   clonarEncabezado(esp);
-  esp._barra.scrollLeft = wrap.scrollLeft;
-  esp._cab.scrollLeft   = wrap.scrollLeft;
   actualizarPegada(esp);
+  esp._aplicar(Math.round(wrap.scrollLeft));
 }
 
 // Copia el encabezado de la tabla con los anchos ya medidos, para que las
@@ -3271,8 +3278,10 @@ function actualizarPegada(esp) {
   const enElTope = esp.getBoundingClientRect().top <= tope + 1;
   const mostrar = enElTope && rCabeza.bottom < tope + altoBarra + 4
                   && rTabla.bottom > tope + altoBarra + 50;
+  const cambio = mostrar !== esp.classList.contains('con-encabezado');
   esp.classList.toggle('con-encabezado', mostrar);
   esp.classList.toggle('pegada', enElTope);
+  if (cambio && mostrar) esp._cab.scrollLeft = Math.round(esp._wrap.scrollLeft);
 }
 
 function vigilarEncabezado(vista) {
