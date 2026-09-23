@@ -1028,11 +1028,18 @@ input.campo-calc {
   grid-template-columns: 34px minmax(0, 1.2fr) minmax(0, 1fr)
                          minmax(0, 1.3fr) minmax(0, 1.1fr) 40px;
 }
+/* Los dos campos del producto con bocadillo solo salen cuando aplica */
+.pt-item .campo-bocadillo { display: none; }
+.pt-item.con-bocadillo .campo-bocadillo { display: flex; }
+.pt-item.con-bocadillo {
+  grid-template-columns: 34px minmax(0, 1.1fr) minmax(0, .85fr) minmax(0, 1.2fr)
+                         minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1.2fr) 40px;
+}
 .mp-item .cinta-num, .pt-item .cinta-num { width: 32px; height: 32px; }
 
 @media (max-width: 1250px) {
   .mp-item { grid-template-columns: 34px 1fr 1fr 1fr 40px; }
-  .pt-item { grid-template-columns: 34px 1fr 1fr 40px; }
+  .pt-item, .pt-item.con-bocadillo { grid-template-columns: 34px 1fr 1fr 40px; }
 }
 
 
@@ -1586,6 +1593,8 @@ input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin
                 <th data-orden="fentrega">F. Entrega</th>
                 <th data-orden="color">Color de cinta</th>
                 <th data-orden="cantidad" style="text-align:right">Cant. obtenida</th>
+                <th data-orden="codigoQueso">Código Queso</th>
+                <th data-orden="loteBocadillo">Lote Bocadillo</th>
                 <th data-orden="cliente">Cliente</th>
                 <th data-orden="producto">Producto terminado</th>
                 <th data-orden="presentacion">Presentación</th>
@@ -1595,7 +1604,7 @@ input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin
               </tr>
             </thead>
             <tbody id="cintas-body">
-              <tr><td colspan="10" class="empty-state"><div class="empty-state-text">Cargando códigos...</div></td></tr>
+              <tr><td colspan="12" class="empty-state"><div class="empty-state-text">Cargando códigos...</div></td></tr>
             </tbody>
           </table>
         </div>
@@ -1891,7 +1900,8 @@ const COLS_MATERIAS = ['id_materia','id_pedido','mp_tipo_producto','mp_peso',
   'mp_cantidad_empleada','mp_libras_tajadas','mp_lote_vto','fecha_reg'];
 // Detalle de trazabilidad: N códigos por pedido
 const COLS_TRAZAS = ['id_traza','id_pedido','pt_lote_vto','pt_cantidad_obtenida',
-  'pt_codigo_trazabilidad','pt_color_cinta','fecha_reg'];
+  'pt_codigo_trazabilidad','pt_color_cinta','fecha_reg',
+  'pt_codigo_queso','pt_lote_bocadillo'];
 
 const HOJA_PEDIDOS    = 'PEDIDOS_V2';
 const HOJA_REEMPAQUE  = 'REEMPAQUE_V2';
@@ -2388,14 +2398,19 @@ async function asegurarHojas() {
     sheetIds = {};   // los ids cambiaron: forzar relectura
     toast('Se crearon las hojas de detalle: ' + faltan.map(f => f.titulo).join(' y '), 'info');
   }
-  // El encabezado de PEDIDOS_V2 puede haber quedado corto al añadir columnas.
-  // Solo se reescribe si de verdad no coincide, para no escribir en cada carga.
-  try {
-    const cab = await sheetsGet(`${HOJA_PEDIDOS}!A1:${COL_FIN_PEDIDOS}1`);
-    const actual = (cab.values && cab.values[0]) || [];
-    const coincide = COLS_PEDIDOS.every((c, i) => String(actual[i] || '') === c);
-    if (!coincide) await sheetsUpdate(`${HOJA_PEDIDOS}!A1:${COL_FIN_PEDIDOS}1`, [COLS_PEDIDOS]);
-  } catch (e) { /* si falla, la app sigue: el encabezado es solo documentación */ }
+  // Los encabezados pueden haber quedado cortos al añadir columnas.
+  // Solo se reescriben si de verdad no coinciden, para no escribir en cada carga.
+  for (const [hoja, cols] of [[HOJA_PEDIDOS, COLS_PEDIDOS],
+                              [HOJA_MATERIAS, COLS_MATERIAS],
+                              [HOJA_TRAZAS, COLS_TRAZAS]]) {
+    try {
+      const fin = colLetra(cols.length - 1);
+      const cab = await sheetsGet(`${hoja}!A1:${fin}1`);
+      const actual = (cab.values && cab.values[0]) || [];
+      const coincide = cols.every((c, i) => String(actual[i] || '') === c);
+      if (!coincide) await sheetsUpdate(`${hoja}!A1:${fin}1`, [cols]);
+    } catch (e) { /* si falla, la app sigue: el encabezado es solo documentación */ }
+  }
   hojasVerificadas = true;
 }
 
@@ -2611,10 +2626,19 @@ function addTrazaRow(pref, data) {
       <label>Color de cinta</label>
       <input class="pt-color" value="${esc(data?.pt_color_cinta || 'NO APLICA')}" placeholder="NO APLICA">
     </div>
+    <div class="field campo-bocadillo">
+      <label>Código Queso</label>
+      <input class="pt-codigo-queso mono" value="${esc(data?.pt_codigo_queso || '')}">
+    </div>
+    <div class="field campo-bocadillo">
+      <label>Lote Bocadillo</label>
+      <input class="pt-lote-bocadillo mono" value="${esc(data?.pt_lote_bocadillo || '')}">
+    </div>
     <button class="btn btn-xs btn-danger" onclick="quitarFilaDetalle(this,'${pref}')" title="Quitar"
             style="align-self:flex-end;margin-bottom:1px;font-size:15px;line-height:1;padding:4px 8px">✕</button>`;
   cont.appendChild(div);
   renumerarFilas(cont);
+  actualizarCampoBocadillo(pref);
   recalcularDetalle(pref);
 }
 
@@ -2646,6 +2670,11 @@ function getTrazas(pref) {
     pt_cantidad_obtenida:   val(it.querySelector('.pt-cant')),
     pt_codigo_trazabilidad: safeText(val(it.querySelector('.pt-codigo'))),
     pt_color_cinta:         safeText(val(it.querySelector('.pt-color'))),
+    // Solo tienen sentido en el producto con bocadillo; si no, van vacíos
+    pt_codigo_queso:        it.classList.contains('con-bocadillo')
+                              ? safeText(val(it.querySelector('.pt-codigo-queso'))) : '',
+    pt_lote_bocadillo:      it.classList.contains('con-bocadillo')
+                              ? safeText(val(it.querySelector('.pt-lote-bocadillo'))) : '',
   })).filter(t => t.pt_lote_vto || t.pt_cantidad_obtenida || t.pt_codigo_trazabilidad);
 }
 
@@ -2959,6 +2988,17 @@ function actualizarCampoBocadillo(pref) {
     const inp = document.getElementById(`${pref}-pt-retal-boc`);
     if (inp) inp.value = '';
   }
+
+  // Código Queso y Lote Bocadillo en cada fila de trazabilidad
+  (contenedorPT(pref)?.querySelectorAll('.pt-item') || []).forEach(it => {
+    it.classList.toggle('con-bocadillo', mostrar);
+    if (!mostrar) {
+      const q = it.querySelector('.pt-codigo-queso');
+      const l = it.querySelector('.pt-lote-bocadillo');
+      if (q) q.value = '';
+      if (l) l.value = '';
+    }
+  });
 }
 
 function limpiarForm() {
@@ -5487,6 +5527,7 @@ function renderCintas() {
       pt_color_cinta: p.pt_color_cinta,
       pt_cantidad_obtenida: p.pt_cantidad_obtenida,
       pt_lote_vto: p.pt_lote_vto,
+      pt_codigo_queso: '', pt_lote_bocadillo: '',
     }});
   });
   const total = trazas.length + pedidos.filter(p => !(porPedido[p.id] || []).length).length;
@@ -5494,6 +5535,7 @@ function renderCintas() {
   if (buscar) {
     lista = lista.filter(({ p, t }) => [
       t.pt_codigo_trazabilidad, t.pt_color_cinta, t.pt_lote_vto, fmtFecha(t.pt_lote_vto),
+      t.pt_codigo_queso, t.pt_lote_bocadillo,
       p.fecha_entrega, fmtFecha(p.fecha_entrega), p.cliente, p.pt_tipo_producto,
       p.pt_presentacion, textoGramaje(p.pt_peso), p.id, t.pt_cantidad_obtenida
     ].join(' ').toLowerCase().includes(buscar));
@@ -5506,6 +5548,8 @@ function renderCintas() {
       fentrega:     x => x.p.fecha_entrega || '',
       color:        x => x.t.pt_color_cinta || '',
       cantidad:     x => num(x.t.pt_cantidad_obtenida),
+      codigoQueso:  x => x.t.pt_codigo_queso || '',
+      loteBocadillo:x => x.t.pt_lote_bocadillo || '',
       cliente:      x => x.p.cliente || '',
       producto:     x => x.p.pt_tipo_producto || '',
       presentacion: x => x.p.pt_presentacion || '',
@@ -5525,7 +5569,7 @@ function renderCintas() {
   }
 
   if (!lista.length) {
-    tbody.innerHTML = `<tr><td colspan="10" class="empty-state"><div class="empty-state-text">${
+    tbody.innerHTML = `<tr><td colspan="12" class="empty-state"><div class="empty-state-text">${
       total ? 'No hay códigos con estos filtros' : 'Aún no hay códigos registrados'}</div></td></tr>`;
     return;
   }
@@ -5535,6 +5579,8 @@ function renderCintas() {
       <td style="color:var(--text2);font-size:12px">${fmtFecha(p.fecha_entrega)}</td>
       <td><span class="chip-cinta">${esc(t.pt_color_cinta || '—')}</span></td>
       <td style="text-align:right">${(parseFloat(t.pt_cantidad_obtenida)||0).toLocaleString('es-CO')}</td>
+      <td class="mono" style="font-size:12px">${esc(t.pt_codigo_queso || '—')}</td>
+      <td class="mono" style="font-size:12px">${esc(t.pt_lote_bocadillo || '—')}</td>
       <td>${esc(p.cliente || '—')}</td>
       <td style="font-size:12px" title="${esc(p.pt_tipo_producto||'')}">${esc(nombreCorto(p.pt_tipo_producto)||'—')}</td>
       <td><span class="${presClase(p.pt_presentacion)}">${esc(p.pt_presentacion || '—')}</span></td>
@@ -5735,12 +5781,14 @@ function generarXLSX(pedidosFiltrados) {
   // ── HOJA 4: TRAZABILIDAD (una fila por código) ──
   const trzFil = trazas.filter(t => ids.has(t.id_pedido));
   const trzHeader = ['N°','ID Traza','ID Pedido','Cliente','Fecha de corte','Producto terminado',
-    'Presentación','L / F. Vto.','Cantidad obtenida ind.','Código de trazabilidad','Color de cinta'];
+    'Presentación','L / F. Vto.','Cantidad obtenida ind.','Código de trazabilidad','Color de cinta',
+    'Código Queso','Lote Bocadillo'];
   const trzRows = trzFil.map((t, i) => {
     const p = pedidosFiltrados.find(x => x.id === t.id_pedido) || {};
     return [i+1, t.id_traza, t.id_pedido, p.cliente || '', p.fecha_corte || '',
       p.pt_tipo_producto || '', p.pt_presentacion || '', t.pt_lote_vto || '',
-      num(t.pt_cantidad_obtenida), t.pt_codigo_trazabilidad || '', t.pt_color_cinta || ''];
+      num(t.pt_cantidad_obtenida), t.pt_codigo_trazabilidad || '', t.pt_color_cinta || '',
+      t.pt_codigo_queso || '', t.pt_lote_bocadillo || ''];
   });
   const wsTrz = XLSX.utils.aoa_to_sheet([trzHeader, ...trzRows]);
   wsTrz['!cols'] = trzHeader.map(h => ({ wch: Math.min(Math.max(h.length + 2, 10), 40) }));
