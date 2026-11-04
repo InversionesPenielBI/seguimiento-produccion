@@ -2018,6 +2018,8 @@ function initTokenClient() {
   tokenClient = google.accounts.oauth2.initTokenClient({
     client_id: CLIENT_ID,
     scope: SCOPES,
+    // Ventanita bloqueada o cerrada (no es un rechazo de Google)
+    error_callback: (err) => { if (manejarErrorToken) manejarErrorToken(err); },
     callback: (tokenResponse) => {
       if (tokenResponse.error) {
         if (silentReauthPending) {
@@ -2150,11 +2152,9 @@ function intentarRestaurarSesion() {
   tokenExpiresAt = s.tokenExpiresAt || 0;
   accessToken = s.accessToken || null;
 
-  // Restaurar rol (o derivarlo del email si la sesión es anterior al sistema de roles)
-  currentUserRole = s.currentUserRole || null;
-  if (!currentUserRole && userInfo) {
-    currentUserRole = verificarAcceso(userInfo.email);
-  }
+  // El rol se vuelve a verificar con la lista de ESTA página (si quitaron a la
+  // persona de la lista, ya no entra aunque tenga la sesión guardada)
+  currentUserRole = userInfo ? verificarAcceso(userInfo.email) : null;
   // Si el email no está autorizado, borrar sesión
   if (!currentUserRole) {
     limpiarSesion();
@@ -2169,20 +2169,13 @@ function intentarRestaurarSesion() {
     return true;
   }
 
-  // Token expirado pero el usuario sigue activo: refresh silencioso
-  if (tokenClient) {
-    silentReauthPending = true;
-    try {
-      tokenClient.requestAccessToken({ prompt: '' });
-      // Mientras llega el callback mostramos loading
-      document.getElementById('loading').style.display = 'flex';
-      document.getElementById('auth-screen').style.display = 'none';
-      return true;
-    } catch (e) {
-      silentReauthPending = false;
-      limpiarSesion();
-      return false;
-    }
+  // Permiso de Google vencido pero la sesión sigue activa: se entra igual y
+  // el permiso se renueva con el primer toque (pedirlo solo lo bloquea el navegador)
+  if (userInfo) {
+    actualizarUIUsuario(userInfo);
+    guardarSesion();
+    showApp();
+    return true;
   }
   return false;
 }
@@ -2272,49 +2265,194 @@ function showAuth() {
 // SHEETS API
 // ═══════════════════════════════════════════════════════════
 async function asegurarTokenVigente() {
-  if (accessToken && Date.now() < tokenExpiresAt) return true;
-  if (!tokenClient) return false;
-  // Refresh silencioso
-  return new Promise(resolve => {
-    silentReauthPending = true;
+  while (!tokenVigente()) {
+    if (!tokenClient || !userInfo) return false;
+    if (renovacionEnCurso) { await renovacionEnCurso; continue; }
+    // Dentro de un toque del usuario se puede renovar de una vez
+    if (navigator.userActivation?.isActive) {
+      if (!(await renovarToken()) && userInfo && !tokenVigente()) await esperarToque();
+      continue;
+    }
+    await esperarToque();
+  }
+  return true;
+}
+
+// Ante un 401 de Google: se da el permiso por vencido y se renueva
+function pedirTokenSilencioso() {
+  tokenExpiresAt = 0;
+  return asegurarTokenVigente();
+}
+
+// ═══════════════════════════════════════════════════════════
+// RENOVACIÓN DEL PERMISO DE GOOGLE CON EL PRIMER TOQUE
+// ═══════════════════════════════════════════════════════════
+// El permiso de Google (token) dura una hora. Se renueva con una ventanita que
+// el navegador solo deja abrir si la pide un toque o una tecla del usuario: si
+// se pide sola (al abrir la página, o antes de guardar) el navegador la bloquea
+// y la página terminaba pidiendo iniciar sesión otra vez. Ahora, cuando falta
+// poco para que venza o ya venció, se renueva con el siguiente toque. Si ya
+// venció y la página necesita leer o guardar, muestra un aviso y espera ese
+// toque. No pide contraseña: la ventanita se abre y se cierra sola.
+const MARGEN_RENOVAR_MS = 5 * 60 * 1000;
+let renovacionEnCurso = null;
+let manejarErrorToken = null;
+const esperasToque = [];
+const tokenVigente = () => !!accessToken && Date.now() < tokenExpiresAt;
+const tokenPorVencer = () => !accessToken || Date.now() > tokenExpiresAt - MARGEN_RENOVAR_MS;
+
+function renovarToken() {
+  if (renovacionEnCurso) return renovacionEnCurso;
+  if (!tokenClient) return Promise.resolve(false);
+  renovacionEnCurso = new Promise(resolve => {
     const prev = tokenClient.callback;
-    tokenClient.callback = (resp) => {
-      tokenClient.callback = prev; // restaurar callback original
+    const terminar = ok => { tokenClient.callback = prev; manejarErrorToken = null; renovacionEnCurso = null; resolve(ok); };
+    tokenClient.callback = resp => {
       if (resp.error || !resp.access_token) {
-        silentReauthPending = false;
-        forzarLogout('Tu sesión expiró. Inicia sesión nuevamente.');
-        resolve(false);
+        // Google no dio el permiso (cerró sesión de Google, revocó el acceso…)
+        terminar(false);
+        forzarLogout('Tu sesión de Google se cerró. Inicia sesión nuevamente.');
         return;
       }
       accessToken = resp.access_token;
       const expiresInSec = parseInt(resp.expires_in, 10) || 3600;
       tokenExpiresAt = Date.now() + (expiresInSec - 60) * 1000;
-      silentReauthPending = false;
       guardarSesion();
-      resolve(true);
+      ocultarAvisoToque();
+      terminar(true);
     };
+    // La ventanita no se abrió o se cerró antes de terminar: se espera otro toque
+    manejarErrorToken = () => { terminar(false); if (!tokenVigente()) mostrarAvisoToque(); };
     try { tokenClient.requestAccessToken({ prompt: '' }); }
-    catch (e) { tokenClient.callback = prev; silentReauthPending = false; resolve(false); }
+    catch (e) { terminar(false); }
   });
+  return renovacionEnCurso;
 }
 
-// Re-pide token sin interrumpir al usuario (prompt vacio) (#8 auditoria)
-function pedirTokenSilencioso() {
-  return new Promise((resolve) => {
-    if (!tokenClient) return resolve(false);
-    const prev = tokenClient.callback;
-    tokenClient.callback = (resp) => {
-      tokenClient.callback = prev;
-      if (resp.error || !resp.access_token) return resolve(false);
-      accessToken = resp.access_token;
-      const expiresInSec = parseInt(resp.expires_in, 10) || 3600;
-      tokenExpiresAt = Date.now() + (expiresInSec - 60) * 1000;
-      guardarSesion();
-      resolve(true);
-    };
-    try { tokenClient.requestAccessToken({ prompt: '' }); }
-    catch (e) { tokenClient.callback = prev; resolve(false); }
+function esperarToque() {
+  mostrarAvisoToque();
+  return new Promise(r => esperasToque.push(r));
+}
+
+// Cada toque (click) o tecla: si el permiso está por vencer, se renueva ahí
+function alToqueRenovar() {
+  if (!userInfo || !tokenClient || renovacionEnCurso) return;
+  if (!tokenPorVencer() && !esperasToque.length) return;
+  renovarToken();
+  esperasToque.splice(0).forEach(r => r());
+}
+document.addEventListener('click', alToqueRenovar, true);
+document.addEventListener('keydown', e => { if (e.key !== 'Escape') alToqueRenovar(); }, true);
+
+function mostrarAvisoToque() {
+  let av = document.getElementById('aviso-reconectar');
+  if (!av) {
+    av = document.createElement('div');
+    av.id = 'aviso-reconectar';
+    av.setAttribute('role', 'status');
+    av.style.cssText = 'position:fixed;left:50%;top:14px;transform:translateX(-50%);z-index:10000;display:flex;align-items:center;gap:12px;' +
+      'max-width:calc(100vw - 32px);padding:10px 12px 10px 18px;border-radius:14px;background:#1B354A;color:#fff;font:600 13px/1.35 inherit;' +
+      'box-shadow:0 8px 24px rgba(16,32,46,.28);';
+    av.innerHTML = '<span>La conexión con Google se venció. Toca para continuar.</span>' +
+      '<button type="button" style="border:0;border-radius:10px;padding:8px 14px;background:#fff;color:#1B354A;font:700 12.5px inherit;cursor:pointer">Continuar</button>';
+    document.body.appendChild(av);
+  }
+  av.style.display = 'flex';
+}
+function ocultarAvisoToque() {
+  const av = document.getElementById('aviso-reconectar');
+  if (av) av.style.display = 'none';
+}
+
+// ═══════════════════════════════════════════════════════════
+// AVISO DE VERSIÓN NUEVA
+// ═══════════════════════════════════════════════════════════
+// GitHub deja que el navegador reutilice su copia de la página un rato y la
+// app instalada casi nunca se recarga. Cada 5 minutos y cada vez que se vuelve
+// a la página se le pregunta al servidor si cambió algún archivo propio (la
+// página, entorno.js, estilos…). Si cambió, se descarga la versión nueva y se
+// avisa con un botón "Actualizar"; si no hay nada sin guardar, también se
+// recarga sola la próxima vez que la persona vuelva a la página.
+const VIGILAR_VERSION_MS = 5 * 60 * 1000;
+let firmaVersion = null, versionNueva = false, revisandoVersion = false;
+
+function archivosPropios() {
+  const propios = [location.pathname];
+  document.querySelectorAll('script[src], link[rel="stylesheet"][href]').forEach(el => {
+    try {
+      const u = new URL(el.getAttribute('src') || el.getAttribute('href'), location.href);
+      if (u.origin === location.origin) propios.push(u.pathname);
+    } catch (e) {}
   });
+  return [...new Set(propios)];
+}
+const marcaArchivo = r => r.headers.get('etag') || r.headers.get('last-modified') || '';
+// { archivo: marca } de lo que hay en el servidor y de lo que usa el navegador
+async function firmaServidor() {
+  const out = {};
+  await Promise.all(archivosPropios().map(async p => {
+    const r = await fetch(p, { method: 'HEAD', cache: 'no-store' });
+    if (r.ok) out[p] = marcaArchivo(r);
+  }));
+  return out;
+}
+async function firmaLocal() {
+  const out = {};
+  await Promise.all(archivosPropios().map(async p => {
+    try { const r = await fetch(p, { cache: 'force-cache' }); if (r.ok) out[p] = marcaArchivo(r); } catch (e) {}
+  }));
+  return out;
+}
+function hayCambiosSinGuardar() {
+  try { if (typeof hayCambiosPendientes === 'function') return !!hayCambiosPendientes(); } catch (e) {}
+  return null;   // la página no sabe decirlo
+}
+async function revisarVersion() {
+  if (!/^https?:/.test(location.protocol) || versionNueva || revisandoVersion || !navigator.onLine) return;
+  revisandoVersion = true;
+  try {
+    if (firmaVersion === null) firmaVersion = await firmaLocal();
+    const actual = await firmaServidor();
+    // Solo se comparan los archivos que tienen marca en los dos lados
+    const cambio = Object.keys(actual).some(p => actual[p] && firmaVersion[p] && actual[p] !== firmaVersion[p]);
+    if (!cambio) return;
+    versionNueva = true;
+    // La versión nueva queda en el caché para que la recarga la use
+    await Promise.all(archivosPropios().map(p => fetch(p, { cache: 'reload' }).catch(() => null)));
+    mostrarAvisoVersion();
+  } catch (e) { /* sin internet o el servidor no respondió: se intenta después */ }
+  finally { revisandoVersion = false; }
+}
+function mostrarAvisoVersion() {
+  let av = document.getElementById('aviso-version');
+  if (!av) {
+    av = document.createElement('div');
+    av.id = 'aviso-version';
+    av.setAttribute('role', 'status');
+    av.style.cssText = 'position:fixed;left:50%;bottom:18px;transform:translateX(-50%);z-index:9999;display:flex;align-items:center;gap:12px;' +
+      'max-width:calc(100vw - 32px);padding:10px 12px 10px 18px;border-radius:14px;background:#1B354A;color:#fff;font:600 13px/1.35 inherit;' +
+      'box-shadow:0 8px 24px rgba(16,32,46,.28);';
+    av.innerHTML = '<span>Hay una versión nueva de la página.</span>' +
+      '<button type="button" style="border:0;border-radius:10px;padding:8px 14px;background:#fff;color:#1B354A;font:700 12.5px inherit;cursor:pointer">Actualizar</button>';
+    av.querySelector('button').addEventListener('click', () => {
+      if (hayCambiosSinGuardar() && !confirm('Hay cambios sin guardar en el formato. Si actualizas ahora se pierden (el borrador queda guardado en este equipo). ¿Actualizar?')) return;
+      location.reload();
+    });
+    document.body.appendChild(av);
+  }
+  av.style.display = 'flex';
+}
+function iniciarVigilanciaVersion() {
+  if (!/^https?:/.test(location.protocol)) return;
+  setTimeout(revisarVersion, 15000);
+  setInterval(revisarVersion, VIGILAR_VERSION_MS);
+  document.addEventListener('visibilitychange', () => {
+    if (document.hidden) return;
+    // Volvió a la página: si ya hay versión nueva y nada pendiente, se recarga
+    if (versionNueva && hayCambiosSinGuardar() === false) { location.reload(); return; }
+    revisarVersion();
+  });
+  window.addEventListener('online', revisarVersion);
 }
 
 // fetch con Authorization automatico. Ante 401 renueva token y reintenta UNA vez,
@@ -5929,6 +6067,7 @@ async function enviarInforme() {
 
 window.onload = () => {
   instalarListenersActividad();
+  iniciarVigilanciaVersion();
   const waitForGoogle = setInterval(() => {
     if (window.google && google.accounts && google.accounts.oauth2) {
       clearInterval(waitForGoogle);
