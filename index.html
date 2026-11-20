@@ -1241,6 +1241,30 @@ input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin
   }
 }
 
+/* ── Caídas de internet (traído de Formatos de Proceso - Mosquera) ── */
+/* Guardando: botón que gira y aviso fijo abajo (internet lento) */
+.btn.trabajando { opacity: 1 !important; cursor: progress; }
+.giro { display: inline-block; width: 14px; height: 14px; margin-right: 8px; vertical-align: -2px; border-radius: 50%;
+  border: 2px solid currentColor; border-right-color: transparent; animation: giro .8s linear infinite; }
+@keyframes giro { to { transform: rotate(360deg); } }
+.aviso-guardando { position: fixed; left: 50%; bottom: 86px; transform: translateX(-50%); z-index: 2000; display: none;
+  align-items: center; gap: 6px; max-width: min(520px, calc(100vw - 32px)); padding: 6px 14px; border-radius: 999px;
+  background: rgba(24, 52, 76, .82); color: #fff; font-size: 12px; line-height: 1.35; box-shadow: 0 4px 12px rgba(0,0,0,.12); }
+.aviso-guardando .giro { width: 11px; height: 11px; margin-right: 2px; border-width: 1.5px; }
+.aviso-guardando.show { display: flex; }
+.aviso-guardando .lento { color: #ffd98a; margin-left: 2px; }
+.aviso-guardando.error { background: rgba(143, 45, 45, .9); border-radius: 12px; padding: 8px 10px 8px 14px; }
+.aviso-guardando .cerrar-aviso { margin-left: 4px; flex: 0 0 auto; border: none; background: transparent; color: #fff; font-size: 13px; cursor: pointer; padding: 2px 4px; opacity: .85; }
+/* Aviso de borrador sin guardar */
+.aviso-borrador {
+  display: flex; align-items: center; gap: 14px 18px; flex-wrap: wrap;
+  margin: 0 0 22px; padding: 16px 20px; border-radius: var(--radius);
+  background: #f3e6c4; box-shadow: var(--nm-out-sm);
+  font-size: 13px; color: #5c4300; line-height: 1.5;
+}
+.aviso-borrador b { color: #3f2e00; }
+.aviso-borrador-acc { display: flex; gap: 10px; margin-left: auto; }
+
 </style>
 </head>
 <body>
@@ -1352,6 +1376,14 @@ input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin
 
     <!-- ═══ VIEW: NUEVO PEDIDO ═══ -->
     <div class="view active" id="view-nuevo">
+
+      <div class="aviso-borrador" id="aviso-borrador-f" style="display:none">
+        <span id="aviso-borrador-f-txt"></span>
+        <div class="aviso-borrador-acc">
+          <button class="btn btn-sm btn-primary" onclick="recuperarBorrador('f')">Recuperar</button>
+          <button class="btn btn-sm" onclick="descartarBorrador('f')">Descartar</button>
+        </div>
+      </div>
 
       <!-- ── SECCIÓN 1: INFORMACIÓN GENERAL ── -->
       <div class="card" id="card-general">
@@ -1518,7 +1550,7 @@ input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin
       </div>
 
       <div style="display:flex; justify-content:flex-end; gap:10px; padding-bottom:32px">
-        <button class="btn" onclick="limpiarForm()">Limpiar</button>
+        <button class="btn" onclick="limpiarFormBoton()">Limpiar</button>
         <button class="btn btn-primary" onclick="guardarPedido()" id="btn-guardar">
           Guardar pedido
         </button>
@@ -1728,6 +1760,8 @@ input[type=number]::-webkit-inner-spin-button { -webkit-appearance: none; margin
 
 <!-- Toast -->
 <div class="toast" id="toast"></div>
+<!-- Aviso fijo mientras se guarda (y si falla por internet) -->
+<div class="aviso-guardando" id="aviso-guardando" role="status" aria-live="polite"></div>
 
 <script>
 // ═══════════════════════════════════════════════════════════
@@ -2253,6 +2287,7 @@ function showApp() {
   poblarSelectoresAmpliables();
   if (!contenedorMP('f').children.length) addMateriaRow('f');
   if (!contenedorPT('f').children.length) addTrazaRow('f');
+  ofrecerBorrador('f');
   loadData();
 }
 
@@ -2471,33 +2506,219 @@ async function apiFetch(url, opts = {}, reintento = true) {
   return r;
 }
 
-async function sheetsGet(range) {
-  const r = await apiFetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}`, {}
-  );
-  if (r.status === 401) { forzarLogout('Tu sesión expiró. Inicia sesión nuevamente.'); throw new Error('401'); }
-  if (!r.ok) throw new Error('Error leyendo Sheets: ' + r.status);
-  return r.json();
+// ════════════════════════════════════════════════════════════════════════
+// CAÍDAS DE INTERNET (mismo esquema de "Formatos de Proceso - Mosquera")
+// ════════════════════════════════════════════════════════════════════════
+// Google responde 429/500/503 de vez en cuando sin que haya nada mal: las
+// LECTURAS se reintentan con esperas crecientes (0,8 - 1,6 - 3,2 - 6,4 s).
+// Las ESCRITURAS no se repiten aquí: si Google aplicó el cambio pero la
+// respuesta se perdió (wifi inestable), repetir la misma petición duplicaría
+// filas. Esas se reintentan completas con conReintentos(), que vuelve a ubicar
+// las filas cada vez (guardar es repetible: ver guardarPedido).
+const REINTENTOS = 4;
+const esperar = ms => new Promise(r => setTimeout(r, ms));
+const TEMPORAL = [408, 429, 500, 502, 503, 504];
+// Tiempo máximo de espera de CADA petición a Google. Con el internet colgado
+// el navegador puede esperar minutos sin avisar: pasado este plazo se suelta
+// la página y se avisa, en vez de dejar los botones bloqueados.
+const PLAZO_MS = 20000;
+// Límite total de cada operación (guardar, editar, cerrar, eliminar, cargar).
+// En Formatos es 25 s porque guardar es 1-2 peticiones; aquí un pedido son
+// 8-11 (pedido + materias + trazabilidad + reempaque), por eso es mayor.
+const LIMITE_OP_MS = 45000;
+// Un guardado o carga que tarda más que esto se anota como LENTO.
+const SEG_LENTO = 8;
+let limiteOp = 0;
+const quedaTiempo = (extra = 0) => !limiteOp || Date.now() + extra < limiteOp;
+function errorSinRed(ultimo) {
+  const sinRed = typeof navigator !== 'undefined' && navigator.onLine === false;
+  const e = new Error(sinRed || ultimo?.sinRed
+    ? 'no hay conexión a internet. Revisa el cable o el wifi y vuelve a intentar'
+    : `el internet está muy lento: Google no respondió en ${PLAZO_MS / 1000} segundos. Revisa la conexión y vuelve a intentar`);
+  e.plazo = true;
+  return e;
+}
+function conPlazo(promesa, ctrl, ms = PLAZO_MS) {
+  if (limiteOp) ms = Math.max(1000, Math.min(ms, limiteOp - Date.now()));
+  let t;
+  const vencido = new Promise((_, rechazar) => {
+    t = setTimeout(() => {
+      try { ctrl?.abort(); } catch (_) {}
+      rechazar(errorSinRed());
+    }, ms);
+  });
+  return Promise.race([promesa, vencido]).finally(() => clearTimeout(t));
 }
 
-async function sheetsAppend(range, values) {
-  const r = await apiFetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
-    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ values }) }
-  );
-  if (r.status === 401) { forzarLogout('Tu sesión expiró. Inicia sesión nuevamente.'); throw new Error('401'); }
-  if (!r.ok) throw new Error('Error escribiendo Sheets: ' + r.status);
-  return r.json();
+// Petición a Google con plazo y reintentos. Devuelve el JSON de la respuesta.
+async function pedir(url, opts = {}) {
+  const { sinReintentos, ...peticion } = opts;
+  const intentos = sinReintentos ? 0 : REINTENTOS;
+  let ultimo = null;
+  for (let i = 0; i <= intentos; i++) {
+    if (i) {
+      const espera = 800 * Math.pow(2, i - 1);
+      if (!quedaTiempo(espera)) throw errorSinRed(ultimo);
+      await esperar(espera);
+    }
+    if (!quedaTiempo() || (limiteOp && navigator.onLine === false)) throw errorSinRed(ultimo);
+    let r;
+    const ctrl = typeof AbortController === 'function' ? new AbortController() : null;
+    try { r = await conPlazo(apiFetch(url, { ...peticion, ...(ctrl ? { signal: ctrl.signal } : {}) }), ctrl); }
+    catch (e) {
+      if (e.plazo || e.message === '401') throw e;      // colgado: no se insiste, se avisa
+      ultimo = new Error('Sin conexión con Google. Revisa el internet.'); ultimo.temporal = true; ultimo.sinRed = true; continue;
+    }
+    if (r.status === 401) { forzarLogout('Tu sesión expiró. Inicia sesión nuevamente.'); throw new Error('401'); }
+    if (r.ok) return conPlazo(r.json(), ctrl);
+    if (!TEMPORAL.includes(r.status)) {
+      const detalle = r.status === 403 ? 'no tienes permiso de edición sobre la hoja'
+                    : r.status === 400 ? 'revisa que existan las pestañas del pedido con sus encabezados'
+                    : 'código ' + r.status;
+      throw new Error('Google rechazó la operación (' + detalle + ').');
+    }
+    ultimo = new Error('Google no respondió (código ' + r.status + '). Vuelve a intentar en un momento.');
+    ultimo.temporal = true;
+  }
+  throw ultimo?.sinRed ? errorSinRed(ultimo) : ultimo;
 }
 
-async function sheetsUpdate(range, values) {
-  const r = await apiFetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`,
-    { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ values }) }
-  );
-  if (r.status === 401) { forzarLogout('Tu sesión expiró. Inicia sesión nuevamente.'); throw new Error('401'); }
-  if (!r.ok) throw new Error('Error actualizando Sheets: ' + r.status);
-  return r.json();
+// Reintenta una operación completa (fn vuelve a ubicar filas y a armar las
+// peticiones cada vez) cuando el fallo fue temporal
+async function conReintentos(fn) {
+  for (let intento = 0; ; intento++) {
+    try { return await fn(intento); }
+    catch (e) {
+      if (!e.temporal || intento >= REINTENTOS) throw e;
+      const espera = 800 * Math.pow(2, intento);
+      if (!quedaTiempo(espera)) throw errorSinRed(e);
+      await esperar(espera);
+    }
+  }
+}
+
+const URL_HOJA = `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}`;
+const JSON_PETICION = (method, cuerpo) => ({
+  method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(cuerpo), sinReintentos: true,
+});
+
+function sheetsGet(range) {
+  return pedir(`${URL_HOJA}/values/${encodeURIComponent(range)}`, {});
+}
+function sheetsAppend(range, values) {
+  return pedir(`${URL_HOJA}/values/${encodeURIComponent(range)}:append?valueInputOption=USER_ENTERED&insertDataOption=INSERT_ROWS`,
+    JSON_PETICION('POST', { values }));
+}
+function sheetsUpdate(range, values) {
+  return pedir(`${URL_HOJA}/values/${encodeURIComponent(range)}?valueInputOption=USER_ENTERED`,
+    JSON_PETICION('PUT', { values }));
+}
+
+// ── Bloqueo mientras se guarda ───────────────────────────────────────────
+// Evita el doble clic, muestra el botón girando y un aviso abajo con los
+// segundos ("no cierres la página"). Si falla por internet, el aviso queda
+// fijo hasta que lo cierren o se vuelva a intentar: lo escrito sigue en
+// pantalla (y en el borrador del equipo) para volver a pulsar Guardar.
+let guardando = false;
+async function conBloqueo(etiqueta, fn, boton, idPedido) {
+  if (guardando) { toast('Espera: hay un guardado en curso.', 'error'); return false; }
+  guardando = true;
+  // Solo se reactivan al final los botones que este bloqueo desactivó
+  // (los de un pedido cerrado deben seguir desactivados)
+  const botones = [...document.querySelectorAll('#view-nuevo button, #modal-editar button, #view-historial button')]
+    .filter(b => !b.disabled);
+  botones.forEach(b => b.disabled = true);
+  const estado = document.getElementById('sync-status');
+  const antes = estado.textContent;
+  estado.textContent = etiqueta + '...';
+  const textoBoton = boton?.innerHTML;
+  if (boton) { boton.classList.add('trabajando'); boton.innerHTML = `<span class="giro" aria-hidden="true"></span>${esc(etiqueta)}…`; }
+  const aviso = document.getElementById('aviso-guardando');
+  aviso.classList.remove('error');
+  let fallaGuardado = '';
+  const inicio = Date.now();
+  limiteOp = inicio + LIMITE_OP_MS;
+  const pintar = () => {
+    const s = Math.round((Date.now() - inicio) / 1000);
+    aviso.innerHTML = `<span class="giro" aria-hidden="true"></span>${esc(etiqueta)}… no cierres la página` +
+      (s >= 6 ? `<span class="lento">· internet lento (${s} s)</span>` : '');
+  };
+  pintar(); aviso.classList.add('show');
+  const reloj = setInterval(pintar, 1000);
+  try {
+    await fn();
+    estado.textContent = 'Guardado ' + new Date().toLocaleTimeString('es-CO');
+    const seg = (Date.now() - inicio) / 1000;
+    if (seg >= SEG_LENTO) registrarFallo(etiqueta, 'LENTO', seg, 'se guardó, pero tardó', idPedido);
+    subirFallos();
+    return true;
+  } catch (e) {
+    console.error(e);
+    estado.textContent = antes;
+    if (e.message !== '401') registrarFallo(etiqueta, e.plazo ? 'SIN RESPUESTA' : e.temporal ? 'SIN CONEXION' : 'ERROR', (Date.now() - inicio) / 1000, e.message, idPedido);
+    if (!(e.plazo || e.temporal) && e.message !== '401') toast('No se pudo completar: ' + e.message, 'error');
+    if (e.plazo || e.temporal) fallaGuardado = `<b>No se completó:</b> ${esc(e.message.replace(/\. Revisa.*$/, ''))}. ` +
+      'Lo escrito sigue en pantalla; vuelve a pulsar cuando regrese el internet.';
+    return false;
+  } finally {
+    limiteOp = 0;
+    clearInterval(reloj);
+    if (fallaGuardado) {
+      aviso.innerHTML = `<span>${fallaGuardado}</span><button type="button" class="cerrar-aviso" onclick="this.parentElement.classList.remove('show','error')" aria-label="Cerrar aviso">✕</button>`;
+      aviso.classList.add('error');
+    } else aviso.classList.remove('show', 'error');
+    if (boton) { boton.classList.remove('trabajando'); boton.innerHTML = textoBoton; }
+    guardando = false;
+    botones.forEach(b => b.disabled = false);
+  }
+}
+
+// ── Registro de fallos de conexión ───────────────────────────────────────
+// Cada guardado o carga que falla o tarda queda anotado en el equipo y se sube
+// a la pestaña FALLOS_CONEXION (se crea sola) en cuanto Google vuelve a
+// responder. Así se puede ver cuándo y en qué equipo falló el internet.
+const HOJA_FALLOS = 'FALLOS_CONEXION';
+const COLS_FALLOS = ['fecha_hora', 'usuario', 'equipo', 'accion', 'id_pedido', 'resultado', 'segundos', 'detalle'];
+const CLAVE_FALLOS = 'peniel_mosquera_fallos';
+const pad2 = n => String(n).padStart(2, '0');
+function ahoraLocal() {
+  const d = new Date();
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}:${pad2(d.getSeconds())}`;
+}
+function equipoCorto() {
+  const ua = navigator.userAgent || '';
+  const so = /Android/i.test(ua) ? 'Android' : /iPad|iPhone/i.test(ua) ? 'iOS' : /Windows/i.test(ua) ? 'Windows' : /Mac/i.test(ua) ? 'Mac' : /Linux/i.test(ua) ? 'Linux' : 'Otro';
+  const nav = (ua.match(/Edg\/(\d+)/) && 'Edge ' + ua.match(/Edg\/(\d+)/)[1]) || (ua.match(/Chrome\/(\d+)/) && 'Chrome ' + ua.match(/Chrome\/(\d+)/)[1]) || 'Navegador';
+  return `${so} · ${nav} · ${screen.width}x${screen.height}`;
+}
+function leerFallos() { try { return JSON.parse(localStorage.getItem(CLAVE_FALLOS) || '[]'); } catch (_) { return []; } }
+function registrarFallo(accion, resultado, segundos, detalle, idPedido) {
+  try {
+    const lista = leerFallos();
+    lista.push({ fecha_hora: ahoraLocal(), usuario: userInfo?.email || '', equipo: equipoCorto(), accion,
+      id_pedido: idPedido || '', resultado, segundos: Math.round(segundos * 10) / 10,
+      detalle: String(detalle || '').slice(0, 300) });
+    localStorage.setItem(CLAVE_FALLOS, JSON.stringify(lista.slice(-200)));
+  } catch (_) { /* sin almacenamiento */ }
+}
+let subiendoFallos = false;
+async function subirFallos() {
+  if (subiendoFallos) return;
+  const lista = leerFallos();
+  if (!lista.length) return;
+  subiendoFallos = true;
+  try {
+    if (await obtenerSheetId(HOJA_FALLOS) === undefined) {
+      delete sheetIds[HOJA_FALLOS];
+      await sheetsBatchUpdate([{ addSheet: { properties: { title: HOJA_FALLOS } } }]);
+      await sheetsUpdate(`${HOJA_FALLOS}!A1:${colLetra(COLS_FALLOS.length - 1)}1`, [COLS_FALLOS]);
+      sheetIds = {};
+    }
+    await sheetsAppend(`${HOJA_FALLOS}!A:${colLetra(COLS_FALLOS.length - 1)}`, lista.map(f => objToRow(f, COLS_FALLOS)));
+    // Se quitan solo los que se subieron (pudieron llegar otros mientras tanto)
+    localStorage.setItem(CLAVE_FALLOS, JSON.stringify(leerFallos().slice(lista.length)));
+  } catch (e) { console.warn('No se pudo subir el registro de fallos:', e.message); }
+  finally { subiendoFallos = false; }
 }
 
 async function sheetsFindRow(sheet, colIdx, value) {
@@ -2517,10 +2738,7 @@ async function sheetsFindRow(sheet, colIdx, value) {
 let hojasVerificadas = false;
 async function asegurarHojas() {
   if (hojasVerificadas) return;
-  const r = await apiFetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}?fields=sheets.properties`, {});
-  if (!r.ok) throw new Error('No se pudo leer la estructura del libro: ' + r.status);
-  const data = await r.json();
+  const data = await pedir(`${URL_HOJA}?fields=sheets.properties`, {});
   const titulos = (data.sheets || []).map(s => s.properties.title);
   (data.sheets || []).forEach(sh => { sheetIds[sh.properties.title] = sh.properties.sheetId; });
 
@@ -2554,6 +2772,9 @@ async function asegurarHojas() {
 
 async function loadData() {
   setSyncStatus('Sincronizando...');
+  const inicioCarga = Date.now();
+  const limitePropio = !limiteOp;
+  if (limitePropio) limiteOp = inicioCarga + LIMITE_OP_MS;
   try {
     await asegurarHojas();
     const [pData, rData, mData, tData] = await Promise.all([
@@ -2601,9 +2822,18 @@ async function loadData() {
     if (document.getElementById('view-cintas').classList.contains('active')) renderCintas();
     if (document.getElementById('view-dashboard').classList.contains('active')) renderDashboard();
 
+    const seg = (Date.now() - inicioCarga) / 1000;
+    if (seg >= SEG_LENTO) registrarFallo('Cargando', 'LENTO', seg, 'cargó, pero tardó');
+    if (!guardando) subirFallos();
   } catch(e) {
+    console.error(e);
     setSyncStatus('Error al sincronizar');
-    toast('Error al leer datos: ' + e.message, 'error');
+    if (e.message !== '401') {
+      registrarFallo('Cargando', e.plazo ? 'SIN RESPUESTA' : e.temporal ? 'SIN CONEXION' : 'ERROR', (Date.now() - inicioCarga) / 1000, e.message);
+      toast('No se pudieron leer los datos: ' + e.message, 'error');
+    }
+  } finally {
+    if (limitePropio) limiteOp = 0;
   }
 }
 
@@ -2916,6 +3146,32 @@ const CAMPOS_OBLIGATORIOS = [
 // (materias primas, producto terminado y trazabilidad) puede completarse
 // después desde Editar.
 
+// El id del pedido que se está guardando se conserva si el guardado falla:
+// al volver a pulsar "Guardar" se completa ESE pedido en vez de crear otro.
+// También viaja en el borrador, por si se cierra la página a mitad de camino.
+let idPendienteNuevo = null;
+
+// Escribe un pedido completo de forma repetible: si la fila del pedido ya
+// existe se sobrescribe, y el detalle (materias, trazabilidad y reempaque)
+// se borra y se vuelve a escribir. Repetirla tras una caída de internet deja
+// el pedido igual, nunca duplicado.
+async function escribirPedidoCompleto(ped, filasM, filasT, filasR) {
+  const fila = await sheetsFindRow(HOJA_PEDIDOS, 0, ped.id);
+  if (fila > 0) await sheetsUpdate(`${HOJA_PEDIDOS}!A${fila}:${COL_FIN_PEDIDOS}${fila}`, [objToRow(ped, COLS_PEDIDOS)]);
+  else          await sheetsAppend(RANGO_PEDIDOS, [objToRow(ped, COLS_PEDIDOS)]);
+  await reemplazarDetalle(HOJA_MATERIAS,  COLS_MATERIAS,  ped.id, filasM);
+  await reemplazarDetalle(HOJA_TRAZAS,    COLS_TRAZAS,    ped.id, filasT);
+  await reemplazarDetalle(HOJA_REEMPAQUE, COLS_REEMPAQUE, ped.id, filasR);
+}
+
+const filasMaterias = (id, mats, now) => mats.map((m, i) => ({ ...m, id_materia: id + '_M' + (i + 1), id_pedido: id, fecha_reg: now }));
+const filasTrazas   = (id, trz, now)  => trz.map((t, i)  => ({ ...t, id_traza: id + '_T' + (i + 1), id_pedido: id, fecha_reg: now }));
+const filasReempaque = (id, lista, now) => lista.map((r, i) => ({
+  id_reempaque: id + '_R' + (i + 1), id_pedido: id,
+  cantidad_no_conformes: r.cantidad_no_conformes, letra_codigo: safeText(r.letra_codigo),
+  vto_real: r.vto_real, retal_lb: r.retal_lb, fecha_reg: now,
+}));
+
 async function guardarPedido() {
   const g = id => (document.getElementById(id)?.value ?? '').trim();
 
@@ -2934,111 +3190,62 @@ async function guardarPedido() {
   const fechasMalas = validarRangoFechas(document.getElementById('view-nuevo'));
   if (fechasMalas.length) { avisarFechasInvalidas(fechasMalas); return; }
 
-  const btn = document.getElementById('btn-guardar');
-  btn.disabled = true; btn.textContent = 'Guardando...';
+  if (!idPendienteNuevo) idPendienteNuevo = 'P' + Date.now();
+  const id = idPendienteNuevo;
+  guardarBorrador('f', true);   // el borrador queda con el id, por si se cierra la página
 
-  const id = 'P' + Date.now();
-  try {
-    const now = new Date().toISOString();
-    const c = calcularCampos();   // recalcula y devuelve los valores derivados
-    const mats = getMaterias('f');
-    const trz  = getTrazas('f');
+  const now = new Date().toISOString();
+  const c = calcularCampos();   // recalcula y devuelve los valores derivados
+  const mats = getMaterias('f');
+  const trz  = getTrazas('f');
 
-    const pedidoObj = {
-      id,
-      fecha_corte:            g('f-fecha-corte'),
-      fecha_entrega:          g('f-fecha-entrega'),
-      cliente:                safeText(g('f-cliente')),
-      menu:                   safeText(g('f-menu')),
-      operador:               safeText(g('f-operador')),
-      responsable:            safeText(g('f-responsable')),
-      mp_cantidad_oc:         g('f-mp-cantidad-oc'),
-      mp_tipo_producto:       resumirCampo(mats, 'mp_tipo_producto'),
-      mp_peso:                resumirCampo(mats, 'mp_peso'),
-      mp_cantidad_empleada:   mats.reduce((a, m) => a + (parseFloat(m.mp_cantidad_empleada) || 0), 0),
-      mp_libras_tajadas:      c.librasTajadas,
-      mp_lote_vto:            resumirCampo(mats, 'mp_lote_vto'),
-      pt_tipo_producto:       safeText(g('f-pt-tipo')),
-      pt_presentacion:        safeText(g('f-pt-pres')),
-      pt_peso:                g('f-pt-peso'),
-      pt_operacion:           safeText(g('f-pt-operacion')),
-      pt_sellado:             safeText(g('f-pt-sellado')),
-      pt_cantidad_obtenida:   c.cantObtenida,
-      pt_libras_entregadas:   c.librasEntregadas,
-      pt_retal_lb:            g('f-pt-retal'),
-      pt_retal_bocadillo_lb:  llevaBocadillo(g('f-pt-tipo')) ? g('f-pt-retal-boc') : '',
-      pt_pct_retal:           c.pctRetal,
-      pt_diferencia:          c.diferencia,
-      pt_pct_diferencia:      c.pctDiferencia,
-      pt_cantidad_sobrante:   c.cantidadSobrante,
-      pt_lote_vto:            resumirCampo(trz, 'pt_lote_vto'),
-      pt_codigo_trazabilidad: resumirCampo(trz, 'pt_codigo_trazabilidad'),
-      pt_color_cinta:         resumirCampo(trz, 'pt_color_cinta'),
-      estado: 'ABIERTO',
-      creado_por: userInfo?.email || '',
-      fecha_creacion: now,
-      ultima_edicion: now,
-    };
+  const pedidoObj = {
+    id,
+    fecha_corte:            g('f-fecha-corte'),
+    fecha_entrega:          g('f-fecha-entrega'),
+    cliente:                safeText(g('f-cliente')),
+    menu:                   safeText(g('f-menu')),
+    operador:               safeText(g('f-operador')),
+    responsable:            safeText(g('f-responsable')),
+    mp_cantidad_oc:         g('f-mp-cantidad-oc'),
+    mp_tipo_producto:       resumirCampo(mats, 'mp_tipo_producto'),
+    mp_peso:                resumirCampo(mats, 'mp_peso'),
+    mp_cantidad_empleada:   mats.reduce((a, m) => a + (parseFloat(m.mp_cantidad_empleada) || 0), 0),
+    mp_libras_tajadas:      c.librasTajadas,
+    mp_lote_vto:            resumirCampo(mats, 'mp_lote_vto'),
+    pt_tipo_producto:       safeText(g('f-pt-tipo')),
+    pt_presentacion:        safeText(g('f-pt-pres')),
+    pt_peso:                g('f-pt-peso'),
+    pt_operacion:           safeText(g('f-pt-operacion')),
+    pt_sellado:             safeText(g('f-pt-sellado')),
+    pt_cantidad_obtenida:   c.cantObtenida,
+    pt_libras_entregadas:   c.librasEntregadas,
+    pt_retal_lb:            g('f-pt-retal'),
+    pt_retal_bocadillo_lb:  llevaBocadillo(g('f-pt-tipo')) ? g('f-pt-retal-boc') : '',
+    pt_pct_retal:           c.pctRetal,
+    pt_diferencia:          c.diferencia,
+    pt_pct_diferencia:      c.pctDiferencia,
+    pt_cantidad_sobrante:   c.cantidadSobrante,
+    pt_lote_vto:            resumirCampo(trz, 'pt_lote_vto'),
+    pt_codigo_trazabilidad: resumirCampo(trz, 'pt_codigo_trazabilidad'),
+    pt_color_cinta:         resumirCampo(trz, 'pt_color_cinta'),
+    estado: 'ABIERTO',
+    creado_por: userInfo?.email || '',
+    fecha_creacion: now,
+    ultima_edicion: now,
+  };
 
-    await sheetsAppend(RANGO_PEDIDOS, [objToRow(pedidoObj, COLS_PEDIDOS)]);
+  const ok = await conBloqueo('Guardando', () => conReintentos(() => escribirPedidoCompleto(
+    pedidoObj, filasMaterias(id, mats, now), filasTrazas(id, trz, now), filasReempaque(id, getReempaques(), now)
+  )), document.getElementById('btn-guardar'), id);
+  if (!ok) return;   // el formulario, el id y el borrador se conservan para volver a pulsar
 
-    // Detalle de materias primas y trazabilidad. Si algo falla aquí el pedido YA
-    // está guardado: hay que completarlo desde Editar, nunca crearlo de nuevo.
-    try {
-      if (mats.length) {
-        await sheetsAppend(RANGO_MATERIAS, mats.map((m, i) => objToRow({
-          ...m, id_materia: id + '_M' + (i + 1), id_pedido: id, fecha_reg: now,
-        }, COLS_MATERIAS)));
-      }
-      if (trz.length) {
-        await sheetsAppend(RANGO_TRAZAS, trz.map((t, i) => objToRow({
-          ...t, id_traza: id + '_T' + (i + 1), id_pedido: id, fecha_reg: now,
-        }, COLS_TRAZAS)));
-      }
-    } catch (eDet) {
-      toast('El pedido SÍ se guardó, pero falló el detalle de materias primas o trazabilidad. '
-          + 'Complétalo desde "Editar" — NO lo crees de nuevo.', 'error');
-      await loadData();
-      btn.disabled = false; btn.textContent = 'Guardar pedido';
-      return;
-    }
-
-    try {
-      const nuevos = getReempaques();
-      if (nuevos.length > 0) {
-        const filas = nuevos.map((r, i) => objToRow({
-          id_reempaque: id + '_R' + (i + 1),
-          id_pedido: id,
-          cantidad_no_conformes: r.cantidad_no_conformes,
-          letra_codigo: safeText(r.letra_codigo),
-          vto_real: r.vto_real,
-          retal_lb: r.retal_lb,
-          fecha_reg: now,
-        }, COLS_REEMPAQUE));
-        await sheetsAppend(RANGO_REEMPAQUE, filas);
-      }
-    } catch (eDetalle) {
-      toast('El pedido SI se guardó, pero falló el registro de unidades no conformes. Complétalo desde "Editar" — NO lo crees de nuevo.', 'error');
-      await loadData();
-      btn.disabled = false; btn.textContent = 'Guardar pedido';
-      return;
-    }
-
-    toast('Pedido guardado correctamente', 'success');
-    limpiarForm();
-    const foco = document.getElementById('f-fecha-corte'); if (foco) foco.focus();
-    await loadData();
-  } catch(e) {
-    // Fallo de red: revisar si alcanzó a escribirse, para no duplicar (#4 auditoría)
-    let yaGuardado = false;
-    try { yaGuardado = (await sheetsFindRow(HOJA_PEDIDOS, 0, id)) > 0; } catch(_) {}
-    toast(yaGuardado
-      ? 'El pedido SÍ quedó guardado (revísalo en Historial). NO vuelvas a intentar: crearías un duplicado.'
-      : 'No se pudo guardar. Revisa tu conexión e inténtalo de nuevo.',
-      yaGuardado ? 'info' : 'error');
-  }
-
-  btn.disabled = false; btn.textContent = 'Guardar pedido';
+  idPendienteNuevo = null;
+  borrarBorrador('f');
+  toast('Pedido guardado correctamente', 'success');
+  limpiarForm();
+  const foco = document.getElementById('f-fecha-corte'); if (foco) foco.focus();
+  await loadData();
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -3163,6 +3370,251 @@ function limpiarForm() {
   document.getElementById('reempaque-wrap').style.display = 'none';
   reempaqueCount = 0;
   actualizarCampoBocadillo('f');
+
+  // Formulario limpio: empieza un pedido nuevo, sin borrador
+  idPendienteNuevo = null;
+  sucioNuevo = false;
+  borrarBorrador('f');
+  ocultarAvisoBorrador('f');
+}
+
+// ════════════════════════════════════════════════════════════════════════
+// BORRADOR AUTOMÁTICO (mismo esquema de "Formatos de Proceso - Mosquera")
+// Todo lo que se escribe en "Nuevo pedido" o en el modal de edición se
+// guarda en ESTE equipo medio segundo después de escribir. Si se va el
+// internet, se recarga la página, se cierra el navegador o se apaga el PC
+// antes de guardar, al volver aparece un aviso para recuperarlo.
+// Se borra al guardar, al limpiar, al eliminar o al cerrar el modal
+// descartando los cambios. Solo vive en este equipo: no va a la hoja.
+// ════════════════════════════════════════════════════════════════════════
+const CLAVE_BORRADOR = 'peniel_mosquera_borrador:';
+const DIAS_BORRADOR = 14;               // un borrador más viejo que esto se descarta
+const _tBorrador = { f: 0, e: 0 };
+let sucioNuevo = false;                 // hay algo escrito en "Nuevo pedido" sin guardar
+let sucioEdit = false;                  // hay cambios sin guardar en el modal de edición
+const borradoresOfrecidos = { f: null, e: null };
+const claveBorrador = (pref, id) => CLAVE_BORRADOR + (pref === 'f' ? 'nuevo' : id);
+const contenedorForm = pref => document.getElementById(pref === 'f' ? 'view-nuevo' : 'modal-body');
+
+// Campos sueltos del formulario (los de id f-… / e-…), sin los calculados
+function camposFijos(pref) {
+  const cont = contenedorForm(pref);
+  if (!cont) return [];
+  return [...cont.querySelectorAll(`input[id^="${pref}-"], select[id^="${pref}-"], textarea[id^="${pref}-"]`)]
+    .filter(el => !el.readOnly && !el.classList.contains('campo-calc'));
+}
+
+function tomarFoto(pref) {
+  const campos = {};
+  camposFijos(pref).forEach(el => { campos[el.id] = el.value; });
+  const mats = [...(contenedorMP(pref)?.querySelectorAll('.mp-item') || [])].map(it => ({
+    mp_tipo_producto: val(it.querySelector('.mp-tipo')), mp_peso: val(it.querySelector('.mp-peso')),
+    mp_cantidad_empleada: val(it.querySelector('.mp-cant')), mp_lote_vto: val(it.querySelector('.mp-lote')),
+  }));
+  const trz = [...(contenedorPT(pref)?.querySelectorAll('.pt-item') || [])].map(it => ({
+    pt_lote_vto: val(it.querySelector('.pt-lote')), pt_cantidad_obtenida: val(it.querySelector('.pt-cant')),
+    pt_codigo_trazabilidad: val(it.querySelector('.pt-codigo')), pt_color_cinta: val(it.querySelector('.pt-color')),
+    pt_codigo_queso: val(it.querySelector('.pt-codigo-queso')), pt_lote_bocadillo: val(it.querySelector('.pt-lote-bocadillo')),
+  }));
+  const reemp = pref === 'f' ? getReempaques() : getReempaquesEdit();
+  return { campos, mats, trz, reemp };
+}
+
+// ¿Hay algo escrito además de lo que el formulario trae por defecto?
+function hayContenido(foto) {
+  if (!foto) return false;
+  const porDefecto = { 'f-menu': 'NO APLICA', 'f-operador': 'NO APLICA' };
+  const enCampos = Object.entries(foto.campos || {}).some(([k, v]) =>
+    String(v || '').trim() && !/fecha-(corte|entrega)$/.test(k) && v !== porDefecto[k] && v !== VALOR_NUEVO);
+  const enMats = (foto.mats || []).some(m => m.mp_tipo_producto || m.mp_peso || m.mp_cantidad_empleada || m.mp_lote_vto);
+  const enTrz = (foto.trz || []).some(t => t.pt_lote_vto || t.pt_cantidad_obtenida || t.pt_codigo_trazabilidad ||
+    (t.pt_color_cinta && t.pt_color_cinta !== 'NO APLICA') || t.pt_codigo_queso || t.pt_lote_bocadillo);
+  return enCampos || enMats || enTrz || (foto.reemp || []).length > 0;
+}
+
+function programarBorrador(pref) {
+  clearTimeout(_tBorrador[pref]);
+  _tBorrador[pref] = setTimeout(() => guardarBorrador(pref), 500);
+}
+
+function guardarBorrador(pref, forzar) {
+  clearTimeout(_tBorrador[pref]);
+  try {
+    if (pref === 'f') {
+      if (!sucioNuevo && !forzar) return;
+      const foto = tomarFoto('f');
+      const k = claveBorrador('f');
+      if (!hayContenido(foto)) { localStorage.removeItem(k); return; }
+      localStorage.setItem(k, JSON.stringify({ v: 1, foto, idPendiente: idPendienteNuevo || '',
+        usuario: userInfo?.email || '', t: ahoraLocal() }));
+    } else {
+      if (!editingId || (!sucioEdit && !forzar)) return;
+      const p = pedidos.find(x => x.id === editingId);
+      if (!p || p.estado === 'CERRADO') return;
+      localStorage.setItem(claveBorrador('e', editingId), JSON.stringify({ v: 1, foto: tomarFoto('e'),
+        base: p.ultima_edicion || '', usuario: userInfo?.email || '', t: ahoraLocal() }));
+    }
+  } catch (_) { /* sin espacio o sin almacenamiento: se sigue sin borrador */ }
+}
+
+function borrarBorrador(pref, id) {
+  clearTimeout(_tBorrador[pref]);
+  try { localStorage.removeItem(claveBorrador(pref, id)); } catch (_) {}
+}
+
+// Lee un borrador y lo descarta si es muy viejo o si el pedido cambió después
+// (alguien lo guardó desde otro equipo): en ese caso ya no sirve.
+function leerBorrador(pref, id, base) {
+  try {
+    const k = claveBorrador(pref, id);
+    const b = JSON.parse(localStorage.getItem(k) || 'null');
+    if (!b || b.v !== 1 || !b.foto) return null;
+    const limite = new Date(Date.now() - DIAS_BORRADOR * 86400000);
+    const viejo = String(b.t || '').slice(0, 10) < `${limite.getFullYear()}-${pad2(limite.getMonth() + 1)}-${pad2(limite.getDate())}`;
+    const cambio = pref === 'e' && (b.base || '') !== (base || '');
+    if (viejo || cambio || (pref === 'f' && !hayContenido(b.foto))) { localStorage.removeItem(k); return null; }
+    return b;
+  } catch (_) { return null; }
+}
+
+// Aviso de borrador: "Nuevo pedido" al entrar a la app y el modal al abrir un pedido
+function ofrecerBorrador(pref, id) {
+  let aviso = document.getElementById('aviso-borrador-' + pref);
+  if (pref === 'e') {
+    const p = pedidos.find(x => x.id === id);
+    if (!p || p.estado === 'CERRADO') return;
+    const b = leerBorrador('e', id, p.ultima_edicion);
+    borradoresOfrecidos.e = b;
+    if (!b) return;
+    aviso = document.createElement('div');
+    aviso.className = 'aviso-borrador';
+    aviso.id = 'aviso-borrador-e';
+    aviso.innerHTML = `<span id="aviso-borrador-e-txt"></span><div class="aviso-borrador-acc">
+      <button class="btn btn-sm btn-primary" onclick="recuperarBorrador('e')">Recuperar</button>
+      <button class="btn btn-sm" onclick="descartarBorrador('e')">Descartar</button></div>`;
+    document.getElementById('modal-body').prepend(aviso);
+  } else {
+    const b = leerBorrador('f');
+    borradoresOfrecidos.f = b;
+    if (!aviso) return;
+    if (!b) { aviso.style.display = 'none'; return; }
+  }
+  const b = borradoresOfrecidos[pref];
+  const [dia, hora] = String(b.t).split(' ');
+  const quien = b.usuario ? ' por ' + b.usuario.split('@')[0] : '';
+  const que = pref === 'f'
+    ? (b.idPendiente ? 'de un pedido nuevo que no terminó de guardarse' : 'de un pedido nuevo')
+    : 'de este pedido';
+  document.getElementById(`aviso-borrador-${pref}-txt`).innerHTML =
+    `<b>Hay un borrador sin guardar</b> ${que}, del ${esc(fmtFecha(dia))} a las ${esc((hora || '').slice(0, 5))}${esc(quien)}. ¿Lo recuperas?`;
+  aviso.style.display = '';
+}
+
+function ocultarAvisoBorrador(pref) {
+  const aviso = document.getElementById('aviso-borrador-' + pref);
+  if (!aviso) return;
+  if (pref === 'e') aviso.remove(); else aviso.style.display = 'none';
+  borradoresOfrecidos[pref] = null;
+}
+
+// Pone un valor en un campo; si es un selector y la opción no existe (un
+// cliente nuevo que no alcanzó a guardarse) se agrega.
+function ponerValor(el, v) {
+  if (!el) return;
+  v = v ?? '';
+  if (el.tagName === 'SELECT' && v !== '' && ![...el.options].some(o => o.value === v)) {
+    const opt = document.createElement('option');
+    opt.value = v; opt.textContent = v;
+    const nuevo = [...el.options].find(o => o.value === VALOR_NUEVO);
+    el.insertBefore(opt, nuevo || null);
+  }
+  el.value = v;
+}
+
+function aplicarFoto(pref, foto) {
+  const cont = contenedorForm(pref);
+  Object.entries(foto.campos || {}).forEach(([id, v]) => {
+    const el = document.getElementById(id);
+    if (el && cont.contains(el)) ponerValor(el, v);
+  });
+  actualizarCampoBocadillo(pref);
+
+  const mp = contenedorMP(pref), pt = contenedorPT(pref);
+  mp.innerHTML = '';
+  (foto.mats?.length ? foto.mats : [null]).forEach(m => {
+    addMateriaRow(pref, m || undefined);
+    const fila = mp.lastElementChild;
+    if (m && fila) { ponerValor(fila.querySelector('.mp-tipo'), m.mp_tipo_producto); ponerValor(fila.querySelector('.mp-peso'), m.mp_peso); }
+  });
+  pt.innerHTML = '';
+  (foto.trz?.length ? foto.trz : [null]).forEach(t => addTrazaRow(pref, t || undefined));
+  actualizarCampoBocadillo(pref);
+  recalcularDetalle(pref);   // muestra u oculta la sección de no conformes
+
+  const contR = document.getElementById(pref === 'f' ? 'reempaque-container' : 'edit-reempaque-container');
+  if (contR) {
+    contR.innerHTML = '';
+    if (pref === 'f') reempaqueCount = 0; else { editReempaqueCount = 0; deletedReempaqueIds = []; }
+    (foto.reemp || []).forEach(r => pref === 'f' ? addReempaqueRow(r) : addEditReempaque(r));
+  }
+  calcularCamposGen(pref);
+}
+
+function recuperarBorrador(pref) {
+  const b = borradoresOfrecidos[pref];
+  if (!b) return;
+  const escrito = pref === 'f' ? sucioNuevo && hayContenido(tomarFoto('f')) : sucioEdit;
+  if (escrito && !confirm('Ya escribiste algo en este formulario. ¿Reemplazarlo por el borrador?')) return;
+  ocultarAvisoBorrador(pref);
+  aplicarFoto(pref, b.foto);
+  if (pref === 'f') { idPendienteNuevo = b.idPendiente || null; sucioNuevo = true; }
+  else sucioEdit = true;
+  guardarBorrador(pref, true);
+  toast(pref === 'f' && b.idPendiente
+    ? 'Borrador recuperado. Al guardar se completa el mismo pedido (no se crea otro).'
+    : 'Borrador recuperado. Revísalo y guarda.', 'success');
+}
+
+function descartarBorrador(pref) {
+  const id = pref === 'e' ? editingId : undefined;
+  // Si mientras tanto se escribió algo nuevo, eso queda como el borrador vigente
+  const escrito = pref === 'f' ? sucioNuevo && hayContenido(tomarFoto('f')) : sucioEdit;
+  if (!escrito) borrarBorrador(pref, id);
+  ocultarAvisoBorrador(pref);
+}
+
+// Cualquier cosa que se escriba, elija, agregue o quite en los formularios
+// marca cambios pendientes y programa el borrador.
+function marcarCambio(e) {
+  const t = e.target;
+  if (!t?.closest || t.closest('.aviso-borrador')) return;
+  if (e.type === 'click' && !t.closest('.add-cinta, .cinta-item .btn-danger')) return;
+  if (t.closest('#view-nuevo')) { sucioNuevo = true; programarBorrador('f'); }
+  else if (t.closest('#modal-body') && editingId) { sucioEdit = true; programarBorrador('e'); }
+}
+document.addEventListener('input', marcarCambio, true);
+document.addEventListener('change', marcarCambio, true);
+document.addEventListener('click', marcarCambio, true);
+
+// Al cerrar la pestaña, apagar la tablet o cambiar de aplicación el borrador
+// se escribe de inmediato (sin esperar el medio segundo)
+function guardarBorradoresYa() {
+  if (sucioNuevo) guardarBorrador('f');
+  if (sucioEdit) guardarBorrador('e');
+}
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') guardarBorradoresYa(); });
+window.addEventListener('pagehide', guardarBorradoresYa);
+window.addEventListener('beforeunload', e => {
+  guardarBorradoresYa();
+  const pendiente = (sucioNuevo && hayContenido(tomarFoto('f'))) || (sucioEdit && editingId) || guardando;
+  if (pendiente) { e.preventDefault(); e.returnValue = ''; }
+});
+
+// Botón "Limpiar": pregunta si hay algo escrito, porque también borra el borrador
+function limpiarFormBoton() {
+  if (sucioNuevo && hayContenido(tomarFoto('f')) &&
+      !confirm('Se borrará todo lo escrito en este pedido (y su borrador). ¿Limpiar el formulario?')) return;
+  limpiarForm();
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -3739,7 +4191,12 @@ function listaCon(base, campo) {
 }
 
 function opcionesAmpliables(base, campo, seleccionado) {
-  return optionsHTML(listaCon(base, campo), seleccionado)
+  // El valor elegido se conserva aunque aún no exista en ningún pedido guardado
+  // (un cliente nuevo recién escrito o recuperado de un borrador)
+  const lista = listaCon(base, campo);
+  const sel = String(seleccionado ?? '').trim();
+  if (sel && sel !== VALOR_NUEVO && !lista.includes(sel)) lista.push(sel);
+  return optionsHTML(lista, seleccionado)
        + `<option value="${VALOR_NUEVO}">+ Añadir nuevo…</option>`;
 }
 
@@ -3921,6 +4378,8 @@ function abrirEditar(id) {
   actualizarCampoBocadillo('e');
 
   document.getElementById('modal-editar').classList.add('open');
+  sucioEdit = false;
+  ofrecerBorrador('e', id);
 
   setTimeout(() => {
     const isClosed = p.estado === 'CERRADO';
@@ -3986,21 +4445,44 @@ function quitarEditReempaque(btn) {
   renumberContainer('edit-reempaque-container');
 }
 
-function closeModal() {
+// Cerrar el modal: si hay cambios sin guardar se pregunta, y al aceptar se
+// descarta también su borrador. forzar = cerrar sin preguntar (tras guardar).
+function closeModal(forzar) {
+  if (guardando && !forzar) { toast('Espera: hay un guardado en curso.', 'error'); return; }
+  if (!forzar && sucioEdit && editingId) {
+    if (!confirm('Hay cambios sin guardar en este pedido. ¿Cerrar y perderlos?')) return;
+    borrarBorrador('e', editingId);
+  }
+  clearTimeout(_tBorrador.e);
+  sucioEdit = false;
   document.getElementById('modal-editar').classList.remove('open');
   editingId = null;
 }
 
+// Filas de unidades no conformes escritas en el modal de edición
+function getReempaquesEdit() {
+  return Array.from(document.querySelectorAll('#edit-reempaque-container .cinta-item')).map(item => {
+    const n = item.id.split('-')[1];
+    return {
+      cantidad_no_conformes: document.getElementById('er-cant-' + n)?.value?.trim() || '',
+      letra_codigo: (document.getElementById('er-letra-' + n)?.value?.trim() || '').toUpperCase(),
+      vto_real: document.getElementById('er-vto-' + n)?.value || '',
+      retal_lb: document.getElementById('er-retal-' + n)?.value?.trim() || '',
+    };
+  }).filter(r => r.cantidad_no_conformes || r.letra_codigo || r.vto_real || r.retal_lb);
+}
+
 async function guardarEdicion() {
   if (!editingId) return;
-  const p = pedidos.find(x => x.id === editingId);
+  const id = editingId;
+  const p = pedidos.find(x => x.id === id);
   if (!p) return;
   if (p.estado === 'CERRADO') {
     toast('Este pedido está cerrado. Reabre el pedido para editarlo.', 'error');
     return;
   }
 
-  const g = id => (document.getElementById(id)?.value ?? '').trim();
+  const g = cid => (document.getElementById(cid)?.value ?? '').trim();
   const obligatorios = [
     ['e-fecha-corte','Fecha de corte'], ['e-fecha-entrega','Fecha de entrega'],
     ['e-cliente','Cliente'], ['e-menu','Menú'], ['e-operador','Operador'],
@@ -4020,124 +4502,77 @@ async function guardarEdicion() {
   const fechasMalas = validarRangoFechas(document.getElementById('modal-editar'));
   if (fechasMalas.length) { avisarFechasInvalidas(fechasMalas); return; }
 
-  const btn = document.querySelector('.modal-footer .btn-primary');
-  if (btn) { btn.disabled = true; btn.textContent = 'Guardando...'; }
+  guardarBorrador('e', true);
 
-  try {
-    const rowNum = await sheetsFindRow(HOJA_PEDIDOS, 0, editingId);
-    if (rowNum < 0) { toast('No se encontró el pedido en la hoja', 'error'); return; }
+  const now = new Date().toISOString();
+  const c = calcularCamposEdit();
+  const mats = getMaterias('e');
+  const trz  = getTrazas('e');
 
-    const now = new Date().toISOString();
-    const c = calcularCamposEdit();
-    const mats = getMaterias('e');
-    const trz  = getTrazas('e');
+  const pedidoObj = {
+    id,
+    fecha_corte:            g('e-fecha-corte'),
+    fecha_entrega:          g('e-fecha-entrega'),
+    cliente:                safeText(g('e-cliente')),
+    menu:                   safeText(g('e-menu')),
+    operador:               safeText(g('e-operador')),
+    responsable:            safeText(g('e-responsable')),
+    mp_cantidad_oc:         g('e-mp-cantidad-oc'),
+    mp_tipo_producto:       resumirCampo(mats, 'mp_tipo_producto'),
+    mp_peso:                resumirCampo(mats, 'mp_peso'),
+    mp_cantidad_empleada:   mats.reduce((a, m) => a + (parseFloat(m.mp_cantidad_empleada) || 0), 0),
+    mp_libras_tajadas:      c.librasTajadas,
+    mp_lote_vto:            resumirCampo(mats, 'mp_lote_vto'),
+    pt_tipo_producto:       safeText(g('e-pt-tipo')),
+    pt_presentacion:        safeText(g('e-pt-pres')),
+    pt_peso:                g('e-pt-peso'),
+    pt_operacion:           safeText(g('e-pt-operacion')),
+    pt_sellado:             safeText(g('e-pt-sellado')),
+    pt_cantidad_obtenida:   c.cantObtenida,
+    pt_libras_entregadas:   c.librasEntregadas,
+    pt_retal_lb:            g('e-pt-retal'),
+    pt_retal_bocadillo_lb:  llevaBocadillo(g('e-pt-tipo')) ? g('e-pt-retal-boc') : '',
+    pt_pct_retal:           c.pctRetal,
+    pt_diferencia:          c.diferencia,
+    pt_pct_diferencia:      c.pctDiferencia,
+    pt_cantidad_sobrante:   c.cantidadSobrante,
+    pt_lote_vto:            resumirCampo(trz, 'pt_lote_vto'),
+    pt_codigo_trazabilidad: resumirCampo(trz, 'pt_codigo_trazabilidad'),
+    pt_color_cinta:         resumirCampo(trz, 'pt_color_cinta'),
+    estado: p.estado,
+    creado_por: p.creado_por || '',
+    fecha_creacion: p.fecha_creacion,
+    ultima_edicion: now,
+  };
 
-    const pedidoObj = {
-      id: editingId,
-      fecha_corte:            g('e-fecha-corte'),
-      fecha_entrega:          g('e-fecha-entrega'),
-      cliente:                safeText(g('e-cliente')),
-      menu:                   safeText(g('e-menu')),
-      operador:               safeText(g('e-operador')),
-      responsable:            safeText(g('e-responsable')),
-      mp_cantidad_oc:         g('e-mp-cantidad-oc'),
-      mp_tipo_producto:       resumirCampo(mats, 'mp_tipo_producto'),
-      mp_peso:                resumirCampo(mats, 'mp_peso'),
-      mp_cantidad_empleada:   mats.reduce((a, m) => a + (parseFloat(m.mp_cantidad_empleada) || 0), 0),
-      mp_libras_tajadas:      c.librasTajadas,
-      mp_lote_vto:            resumirCampo(mats, 'mp_lote_vto'),
-      pt_tipo_producto:       safeText(g('e-pt-tipo')),
-      pt_presentacion:        safeText(g('e-pt-pres')),
-      pt_peso:                g('e-pt-peso'),
-      pt_operacion:           safeText(g('e-pt-operacion')),
-      pt_sellado:             safeText(g('e-pt-sellado')),
-      pt_cantidad_obtenida:   c.cantObtenida,
-      pt_libras_entregadas:   c.librasEntregadas,
-      pt_retal_lb:            g('e-pt-retal'),
-      pt_retal_bocadillo_lb:  llevaBocadillo(g('e-pt-tipo')) ? g('e-pt-retal-boc') : '',
-      pt_pct_retal:           c.pctRetal,
-      pt_diferencia:          c.diferencia,
-      pt_pct_diferencia:      c.pctDiferencia,
-      pt_cantidad_sobrante:   c.cantidadSobrante,
-      pt_lote_vto:            resumirCampo(trz, 'pt_lote_vto'),
-      pt_codigo_trazabilidad: resumirCampo(trz, 'pt_codigo_trazabilidad'),
-      pt_color_cinta:         resumirCampo(trz, 'pt_color_cinta'),
-      estado: p.estado,
-      creado_por: p.creado_por || '',
-      fecha_creacion: p.fecha_creacion,
-      ultima_edicion: now,
-    };
-
+  // Todo se reescribe de forma repetible (fila del pedido + detalle completo,
+  // incluido el reempaque): si se cae el internet a mitad, volver a pulsar
+  // "Guardar cambios" lo deja completo y sin filas repetidas.
+  const filasM = filasMaterias(id, mats, now);
+  const filasT = filasTrazas(id, trz, now);
+  const filasR = filasReempaque(id, getReempaquesEdit(), now);
+  const ok = await conBloqueo('Guardando', () => conReintentos(async () => {
+    const rowNum = await sheetsFindRow(HOJA_PEDIDOS, 0, id);
+    if (rowNum < 0) throw new Error('no se encontró el pedido en la hoja (¿lo eliminaron desde otro equipo?)');
     await sheetsUpdate(`${HOJA_PEDIDOS}!A${rowNum}:${COL_FIN_PEDIDOS}${rowNum}`, [objToRow(pedidoObj, COLS_PEDIDOS)]);
+    await reemplazarDetalle(HOJA_MATERIAS,  COLS_MATERIAS,  id, filasM);
+    await reemplazarDetalle(HOJA_TRAZAS,    COLS_TRAZAS,    id, filasT);
+    await reemplazarDetalle(HOJA_REEMPAQUE, COLS_REEMPAQUE, id, filasR);
+  }), document.querySelector('#modal-editar .modal-footer .btn-primary'), id);
+  if (!ok) return;   // el modal sigue abierto con lo escrito, y el borrador también
 
-    // ── Detalle de materias primas y trazabilidad: se reescribe completo ──
-    await reemplazarDetalle(HOJA_MATERIAS, COLS_MATERIAS, editingId,
-      mats.map((m, i) => ({ ...m, id_materia: editingId + '_M' + (i + 1), id_pedido: editingId, fecha_reg: now })), now);
-    await reemplazarDetalle(HOJA_TRAZAS, COLS_TRAZAS, editingId,
-      trz.map((t, i) => ({ ...t, id_traza: editingId + '_T' + (i + 1), id_pedido: editingId, fecha_reg: now })), now);
-
-    // ── Reempaque: actualizar existentes, agregar nuevos y eliminar quitados ──
-    const items = document.querySelectorAll('#edit-reempaque-container .cinta-item');
-    const updates = [];
-    const nuevos  = [];
-    const existentes = reempaques.filter(r => r.id_pedido === editingId).length;
-
-    items.forEach(item => {
-      const n = item.id.split('-')[1];
-      const rid = item.dataset.reempaqueId;
-      const vals = [
-        document.getElementById('er-cant-'  + n)?.value?.trim() || '',
-        safeText((document.getElementById('er-letra-' + n)?.value?.trim() || '').toUpperCase()),
-        document.getElementById('er-vto-'   + n)?.value || '',
-        document.getElementById('er-retal-' + n)?.value?.trim() || '',
-      ];
-      if (rid) updates.push({ rid, vals });
-      else nuevos.push([editingId + '_R' + (existentes + nuevos.length + 1), editingId, ...vals, now]);
-    });
-
-    let filasReemp = [];
-    if (updates.length || deletedReempaqueIds.length) {
-      filasReemp = (await sheetsGet(`${HOJA_REEMPAQUE}!A:A`)).values || [];
-    }
-
-    for (const u of updates) {
-      for (let i = 1; i < filasReemp.length; i++) {
-        if ((filasReemp[i][0] || '').trim() === u.rid) {
-          await sheetsUpdate(`${HOJA_REEMPAQUE}!C${i+1}:F${i+1}`, [u.vals]);
-          break;
-        }
-      }
-    }
-
-    if (nuevos.length) await sheetsAppend(RANGO_REEMPAQUE, nuevos);
-
-    if (deletedReempaqueIds.length) {
-      const rows = [];
-      for (let i = 1; i < filasReemp.length; i++) {
-        if (deletedReempaqueIds.includes((filasReemp[i][0] || '').trim())) rows.push(i + 1);
-      }
-      if (rows.length) {
-        const sid = await obtenerSheetId(HOJA_REEMPAQUE);
-        await eliminarFilasBatch(rows.sort((a,b) => b-a).map(row => ({
-          deleteDimension: { range: { sheetId: sid, dimension: 'ROWS', startIndex: row-1, endIndex: row } }
-        })));
-      }
-      deletedReempaqueIds = [];
-    }
-
-    toast('Cambios guardados', 'success');
-    closeModal();
-    await loadData();
-  } catch(e) {
-    toast('Error al guardar: ' + e.message, 'error');
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = 'Guardar cambios'; }
-  }
+  borrarBorrador('e', id);
+  sucioEdit = false;
+  deletedReempaqueIds = [];
+  toast('Cambios guardados', 'success');
+  closeModal(true);
+  await loadData();
 }
 
 async function cambiarEstado() {
   if (!editingId) return;
-  const p = pedidos.find(x => x.id === editingId);
+  const id = editingId;
+  const p = pedidos.find(x => x.id === id);
   if (!p) return;
   const nuevoEstado = p.estado === 'CERRADO' ? 'ABIERTO' : 'CERRADO';
 
@@ -4145,22 +4580,20 @@ async function cambiarEstado() {
     toast('Solo los administradores pueden reabrir pedidos cerrados.', 'error');
     return;
   }
-  const btn = document.querySelector('.modal-footer .btn-danger');
-  if (btn) btn.disabled = true;
-  try {
-    const rowNum = await sheetsFindRow(HOJA_PEDIDOS, 0, editingId);
-    if (rowNum < 0) return;
-    // Columna AB = estado · columna AE = ultima_edicion
+  if (nuevoEstado === 'CERRADO' && sucioEdit &&
+      !confirm('Hay cambios sin guardar en este pedido. Si lo cierras ahora se pierden. ¿Cerrar el pedido de todas formas?')) return;
+  const ok = await conBloqueo(nuevoEstado === 'CERRADO' ? 'Cerrando pedido' : 'Reabriendo pedido', () => conReintentos(async () => {
+    const rowNum = await sheetsFindRow(HOJA_PEDIDOS, 0, id);
+    if (rowNum < 0) throw new Error('no se encontró el pedido en la hoja (¿lo eliminaron desde otro equipo?)');
     await sheetsUpdate(`${HOJA_PEDIDOS}!${colLetra(COLS_PEDIDOS.indexOf('estado'))}${rowNum}`, [[nuevoEstado]]);
     await sheetsUpdate(`${HOJA_PEDIDOS}!${colLetra(COLS_PEDIDOS.indexOf('ultima_edicion'))}${rowNum}`, [[new Date().toISOString()]]);
-    toast(`Pedido marcado como ${nuevoEstado}`, 'success');
-    closeModal();
-    await loadData();
-  } catch(e) {
-    toast('Error: ' + e.message, 'error');
-  } finally {
-    if (btn) btn.disabled = false;
-  }
+  }), document.querySelector('#modal-editar .modal-footer .btn-danger'), id);
+  if (!ok) return;
+  borrarBorrador('e', id);
+  sucioEdit = false;
+  toast(`Pedido marcado como ${nuevoEstado}`, 'success');
+  closeModal(true);
+  await loadData();
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -4188,10 +4621,7 @@ async function reemplazarDetalle(hoja, cols, idPedido, filas, now) {
 
 async function obtenerSheetId(sheetName) {
   if (sheetIds[sheetName] !== undefined) return sheetIds[sheetName];
-  const r = await apiFetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}?fields=sheets.properties`, {}
-  );
-  const data = await r.json();
+  const data = await pedir(`${URL_HOJA}?fields=sheets.properties`, {});
   (data.sheets || []).forEach(sh => { sheetIds[sh.properties.title] = sh.properties.sheetId; });
   return sheetIds[sheetName];
 }
@@ -4201,12 +4631,7 @@ async function obtenerSheetId(sheetName) {
 async function sheetsBatchUpdate(requests) { return eliminarFilasBatch(requests); }
 
 async function eliminarFilasBatch(requests) {
-  const r = await apiFetch(
-    `https://sheets.googleapis.com/v4/spreadsheets/${SHEET_ID}:batchUpdate`,
-    { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ requests }) }
-  );
-  if (!r.ok) throw new Error('Error al eliminar filas: ' + r.status);
-  return r.json();
+  return pedir(`${URL_HOJA}:batchUpdate`, JSON_PETICION('POST', { requests }));
 }
 
 async function eliminarPedido(id) {
@@ -4228,26 +4653,16 @@ async function eliminarPedido(id) {
     + '\n\nEsta acción no se puede deshacer.';
   if (!confirm(msg)) return;
 
-  try {
+  // Repetible: cada intento vuelve a ubicar las filas. Si un intento anterior
+  // sí borró (y solo se perdió la respuesta), el siguiente ya no encuentra
+  // nada y se da por eliminado.
+  const ok = await conBloqueo('Eliminando', () => conReintentos(async () => {
     const [pedData, reempData, matData, trzData] = await Promise.all([
       sheetsGet(`${HOJA_PEDIDOS}!A:A`),
       sheetsGet(`${HOJA_REEMPAQUE}!B:B`),
       sheetsGet(`${HOJA_MATERIAS}!B:B`),
       sheetsGet(`${HOJA_TRAZAS}!B:B`),
     ]);
-
-    const pedRows = pedData.values || [];
-    let pedRow = -1;
-    for (let i = 1; i < pedRows.length; i++) {
-      if ((pedRows[i][0] || '').trim() === id) { pedRow = i + 1; break; }
-    }
-    if (pedRow < 0) { toast('No se encontró el pedido', 'error'); return; }
-
-    const reempRows = reempData.values || [];
-    const reempNums = [];
-    for (let i = 1; i < reempRows.length; i++) {
-      if ((reempRows[i][0] || '').trim() === id) reempNums.push(i + 1);
-    }
 
     const filasDe = data => {
       const rows = data.values || [];
@@ -4257,8 +4672,11 @@ async function eliminarPedido(id) {
       }
       return nums;
     };
-    const matNums = filasDe(matData);
-    const trzNums = filasDe(trzData);
+    const pedNums   = filasDe(pedData);
+    const reempNums = filasDe(reempData);
+    const matNums   = filasDe(matData);
+    const trzNums   = filasDe(trzData);
+    if (!pedNums.length && !reempNums.length && !matNums.length && !trzNums.length) return;
 
     const pedSheetId   = await obtenerSheetId(HOJA_PEDIDOS);
     const reempSheetId = await obtenerSheetId(HOJA_REEMPAQUE);
@@ -4269,19 +4687,17 @@ async function eliminarPedido(id) {
       deleteDimension: { range: { sheetId, dimension: 'ROWS', startIndex: row - 1, endIndex: row } }
     }));
 
-    const requests = [
+    await eliminarFilasBatch([
       ...borrar(reempSheetId, reempNums),
       ...borrar(matSheetId, matNums),
       ...borrar(trzSheetId, trzNums),
-      { deleteDimension: { range: { sheetId: pedSheetId, dimension: 'ROWS', startIndex: pedRow - 1, endIndex: pedRow } } }
-    ];
-
-    await eliminarFilasBatch(requests);
-    toast('Pedido eliminado correctamente', 'success');
-    await loadData();
-  } catch (e) {
-    toast('Error al eliminar: ' + e.message, 'error');
-  }
+      ...borrar(pedSheetId, pedNums),
+    ]);
+  }), null, id);
+  if (!ok) return;
+  borrarBorrador('e', id);
+  toast('Pedido eliminado correctamente', 'success');
+  await loadData();
 }
 
 // Renumera visualmente los items de un container
